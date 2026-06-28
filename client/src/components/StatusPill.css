@@ -1,0 +1,28 @@
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.status-neutral { background: var(--surface-sunken); color: var(--slate-soft); }
+.status-progress { background: var(--amber-wash); color: var(--amber-deep); }
+.status-success { background: var(--moss-wash); color: var(--moss); }
+.status-danger { background: var(--danger-wash); color: var(--danger); }
+
+.status-dot-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber-deep);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}

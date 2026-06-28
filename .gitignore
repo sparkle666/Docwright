@@ -1,0 +1,22 @@
+node_modules/
+.env
+*.log
+
+# Server storage (uploaded videos, extracted frames/audio, sqlite db)
+server/storage/uploads/*
+server/storage/frames/*
+server/storage/audio/*
+server/storage/exports/*
+server/storage/*.db
+server/storage/*.db-*
+!server/storage/uploads/.gitkeep
+!server/storage/frames/.gitkeep
+!server/storage/audio/.gitkeep
+!server/storage/exports/.gitkeep
+
+# Client build output
+client/dist/
+client/node_modules/
+
+# OS
+.DS_Store

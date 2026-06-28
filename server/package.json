@@ -1,0 +1,45 @@
+{
+  "name": "vid2docs-server",
+  "version": "1.0.0",
+  "description": "AI-powered video-to-documentation backend",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest --runInBand",
+    "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch --runInBand",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "docx": "^9.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.1",
+    "marked": "^13.0.3",
+    "multer": "^1.4.5-lts.1",
+    "nanoid": "^5.0.7",
+    "openai": "^4.63.0",
+    "puppeteer": "^23.4.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "eslint": "^9.11.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4"
+  },
+  "jest": {
+    "extensionsToTreatAsEsm": [
+      ".js"
+    ],
+    "transform": {},
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  }
+}

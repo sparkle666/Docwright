@@ -1,0 +1,97 @@
+.settings-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 56px 32px 100px;
+}
+
+.settings-page h1 {
+  font-family: var(--font-display);
+  font-size: 2.1rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.settings-sub {
+  color: var(--slate-soft);
+  margin: 0 0 36px;
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.settings-section {
+  margin-bottom: 36px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-section:last-child { border-bottom: none; }
+
+.settings-section h2 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  margin: 0 0 16px;
+}
+
+.settings-note {
+  font-size: 0.84rem;
+  color: var(--slate-soft);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.settings-note code {
+  background: var(--surface-sunken);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.field-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--slate-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.text-input {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+.text-input:focus { border-color: var(--amber-deep); }
+
+.settings-saved {
+  display: inline-block;
+  font-size: 0.82rem;
+  color: var(--moss);
+  font-weight: 600;
+}
+
+.status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+.status-row:last-child { border-bottom: none; }
+
+.status-ok { color: var(--moss); font-weight: 600; font-size: 0.84rem; }
+.status-bad { color: var(--danger); font-weight: 600; font-size: 0.84rem; }
+
+.model-name {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--slate-soft);
+}
