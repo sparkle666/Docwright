@@ -16,6 +16,9 @@ export default function VideoPanel({ defaultOpen = false, label = 'Source video'
 
   if (!video) return null;
 
+  const hasVideo = Boolean(video.src);
+  const isMetadataReady = video.isReady && Number.isFinite(video.duration) && video.duration > 0;
+
   return (
     <div className={`video-panel ${open ? 'video-panel-open' : ''}`}>
       <button type="button" className="video-panel-toggle" onClick={() => setOpen((o) => !o)}>
@@ -29,14 +32,46 @@ export default function VideoPanel({ defaultOpen = false, label = 'Source video'
 
       {open && (
         <div className="video-panel-body">
-          <video
-            ref={video.videoRef}
-            src={video.src}
-            controls
-            preload="metadata"
-            onLoadedMetadata={(e) => { video.setDuration(e.target.duration); video.setIsReady(true); }}
-            onTimeUpdate={(e) => video.setCurrentTime(e.target.currentTime)}
-          />
+          <div className="video-panel-stage">
+            {hasVideo ? (
+              <video
+                ref={video.videoRef}
+                src={video.src}
+                controls
+                preload="metadata"
+                onLoadedMetadata={(e) => { video.setDuration(e.target.duration); video.setIsReady(true); }}
+                onTimeUpdate={(e) => video.setCurrentTime(e.target.currentTime)}
+              />
+            ) : (
+              <div className="video-panel-empty">
+                <div className="video-panel-empty-title">No video is available for this project.</div>
+                <div className="video-panel-empty-subtitle">Upload a recording to preview it here, or reopen the page once the source is available.</div>
+              </div>
+            )}
+          </div>
+
+          {hasVideo && (
+            <div className="video-panel-actions">
+              <a
+                className="btn btn-secondary btn-sm video-panel-action"
+                href={video.src}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open video in new tab
+              </a>
+              <a
+                className="btn btn-secondary btn-sm btn-sm"
+                href={video.src}
+                download
+              >
+                Download video
+              </a>
+              {!isMetadataReady && (
+                <span className="video-panel-note">If the embedded player stays blank, open or download the source file directly.</span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

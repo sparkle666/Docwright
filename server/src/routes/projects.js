@@ -896,9 +896,18 @@ projectsRouter.post('/projects/:id/voice', (req, res) => {
   if (VOICE_PROCESSING_STATUSES.has(project.voice_status)) {
     return res.status(409).json({ error: 'Voice generation already in progress' });
   }
-  const transcript = getTranscript(project.id);
-  if (!transcript) {
-    return res.status(400).json({ error: 'No transcript available — run the documentation pipeline first' });
+
+  // Voice-over now narrates the AI-generated documentation steps (not the raw
+  // transcript), so we need at least one step with timestamps to proceed.
+  const steps = listSteps(project.id);
+  const readySteps = steps.filter(
+    (s) => typeof s.start_seconds === 'number' && typeof s.end_seconds === 'number'
+      && ((s.title || '').trim() || (s.body_markdown || '').trim()),
+  );
+  if (readySteps.length === 0) {
+    return res.status(400).json({
+      error: 'No documentation steps found — generate the documentation first, then come back to create the voice-over.',
+    });
   }
 
   const voice = req.body?.voice || process.env.TTS_VOICE || DEFAULT_VOICE;

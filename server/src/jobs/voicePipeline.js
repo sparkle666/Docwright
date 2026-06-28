@@ -1,11 +1,11 @@
 import path from 'path';
 import fs from 'fs';
-import { updateProject, getTranscript, logUsage } from '../db/repository.js';
+import { updateProject, listSteps, logUsage } from '../db/repository.js';
 import {
   getAudioDuration, convertToStandardWav, generateSilence, speedUpAudio,
   concatAudioFiles, muxAudioIntoVideo,
 } from '../services/ffmpegService.js';
-import { synthesizeSegmentAudio, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
+import { synthesizeSegmentAudio, stripMarkdownForTTS, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
 
 const STORAGE_ROOT = path.join(process.cwd(), 'storage');
 
@@ -29,12 +29,16 @@ const MIN_GAP_SECONDS = 0.03;
  * processProject() / regenerateDoc() in pipeline.js.
  *
  * Approach (see ffmpegService.js for the primitives):
- *   1. Synthesize each transcript segment's text into its own speech clip.
- *   2. Walk segments in order, tracking a "cursor" position in the new
- *      timeline. Before each clip, insert silence to cover any gap between
- *      the cursor and the segment's original start time. If a clip runs
- *      longer than its original slot, speed it up (pitch-preserved, capped)
- *      rather than overlapping the next segment's speech.
+ *   1. Load the project's generated doc steps (title + body_markdown), strip
+ *      markdown formatting so TTS reads clean prose, then synthesize each
+ *      step into its own speech clip. Steps carry start_seconds/end_seconds
+ *      timestamps derived from the transcript, so the narration lands at the
+ *      right moment in the video — exactly like a walkthrough voice-over.
+ *   2. Walk steps in chronological order, tracking a "cursor" position in
+ *      the new timeline. Before each clip insert silence to cover any gap
+ *      from the cursor to the step's start_seconds. If a clip overruns its
+ *      slot, speed it up (pitch-preserved, capped) rather than overlapping
+ *      the next step's narration.
  *   3. Concatenate everything into one track, pad to the full video length.
  *   4. Mux that track over the original video's picture (video stream
  *      untouched) and overwrite the project's video file.
@@ -48,32 +52,56 @@ export async function generateAiVoice(projectId, project, options = {}) {
       voice_status: 'generating', voice_error: null, voice_name: voice, voice_model: model,
     });
 
-    const transcript = getTranscript(projectId);
-    if (!transcript) {
-      throw new Error('No transcript available — run the documentation pipeline first.');
+    // Load the AI-generated documentation steps for this project.
+    // Each step has: title, body_markdown, start_seconds, end_seconds.
+    const rawSteps = listSteps(projectId);
+    const steps = rawSteps.filter((s) => {
+      const hasTime = typeof s.start_seconds === 'number' && typeof s.end_seconds === 'number';
+      const hasText = (s.title || '').trim() || (s.body_markdown || '').trim();
+      return hasTime && hasText;
+    });
+
+    if (steps.length === 0) {
+      throw new Error(
+        'No documentation steps with timestamps found — generate the documentation first.',
+      );
     }
-    const segments = (transcript.raw_json.segments || []).filter((s) => (s.text || '').trim());
-    if (segments.length === 0) {
-      throw new Error('Transcript has no spoken segments to synthesize.');
+
+    // Build the narration text for each step: "Step N — Title. Body." with
+    // all markdown stripped so the TTS never reads out asterisks or backticks.
+    function buildStepNarration(step, index) {
+      const titleText = stripMarkdownForTTS(step.title || '').trim();
+      const bodyText = stripMarkdownForTTS(step.body_markdown || '').trim();
+      const parts = [];
+      if (titleText) parts.push(`Step ${index + 1}. ${titleText}.`);
+      if (bodyText) parts.push(bodyText);
+      return parts.join(' ');
     }
 
     fs.mkdirSync(workDir, { recursive: true });
 
-    // 1. Synthesize + normalize each segment, measuring real clip duration.
+    // 1. Synthesize + normalize each step's narration, measuring real clip duration.
     const parts = [];
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      const text = seg.text.trim();
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const text = buildStepNarration(step, i);
+      if (!text) continue; // skip if stripping left nothing
 
       const { buffer, usage } = await synthesizeSegmentAudio({ text, voice, model });
-      const rawPath = path.join(workDir, `seg_${i}_raw.wav`);
+      const rawPath = path.join(workDir, `step_${i}_raw.wav`);
       fs.writeFileSync(rawPath, buffer);
 
-      const normPath = path.join(workDir, `seg_${i}_norm.wav`);
+      const normPath = path.join(workDir, `step_${i}_norm.wav`);
       await convertToStandardWav(rawPath, normPath);
       const duration = await getAudioDuration(normPath);
 
-      parts.push({ index: i, start: seg.start, end: seg.end, filePath: normPath, duration });
+      parts.push({
+        index: i,
+        start: step.start_seconds,
+        end: step.end_seconds,
+        filePath: normPath,
+        duration,
+      });
 
       logUsage(projectId, {
         service: 'tts',
@@ -109,7 +137,7 @@ export async function generateAiVoice(projectId, project, options = {}) {
       if (clipDuration > slotDuration * OVERFLOW_TOLERANCE) {
         const neededFactor = Math.min(clipDuration / slotDuration, MAX_SPEEDUP_FACTOR);
         if (neededFactor > 1.02) {
-          const fastPath = path.join(workDir, `seg_${part.index}_fast.wav`);
+          const fastPath = path.join(workDir, `step_${part.index}_fast.wav`);
           await speedUpAudio(clipPath, fastPath, neededFactor);
           clipPath = fastPath;
           clipDuration = await getAudioDuration(fastPath);
