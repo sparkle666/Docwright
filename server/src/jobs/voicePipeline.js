@@ -17,6 +17,12 @@ const MAX_SPEEDUP_FACTOR = 1.6;
 const OVERFLOW_TOLERANCE = 1.05;
 // Don't insert a silence gap shorter than this — not audible, not worth a file.
 const MIN_GAP_SECONDS = 0.03;
+// How many seconds to delay the narration after a step's timestamp.
+// Whisper timestamps reflect when the *speaker's voice* began, but the
+// screen action often appears slightly later (especially when clicking links
+// with network lag). This offset lets the visual catch up before the AI
+// voice starts describing it. Tune this value if audio still leads the screen.
+const NARRATION_START_OFFSET = 2.0;
 
 /**
  * Generates a full AI voice-over for a project and replaces its video's
@@ -122,7 +128,11 @@ export async function generateAiVoice(projectId, project, options = {}) {
     let cursor = 0;
 
     for (const part of parts) {
-      const gap = part.start - cursor;
+      // Apply the narration offset: push the clip start forward so the screen
+      // action has time to appear before the AI voice begins describing it.
+      // Clamp to 0 so we never seek backward if the offset overshoots.
+      const targetStart = Math.max(0, part.start + NARRATION_START_OFFSET);
+      const gap = targetStart - cursor;
       if (gap > MIN_GAP_SECONDS) {
         const silPath = path.join(workDir, `sil_${part.index}.wav`);
         await generateSilence(gap, silPath);
