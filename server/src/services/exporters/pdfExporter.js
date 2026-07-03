@@ -12,12 +12,13 @@ export async function htmlToPdfBuffer(htmlString) {
   try {
     const page = await browser.newPage();
     await page.setContent(htmlString, { waitUntil: 'networkidle0' });
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
-    });
-    return pdfBuffer;
+    const pdfBytes = await page.pdf({
+    format: 'A4',
+    printBackground: true,
+    margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
+  });
+  return Buffer.from(pdfBytes);
+  
   } finally {
     await browser.close();
   }

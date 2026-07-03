@@ -1,5 +1,5 @@
 // Presets that shape how GPT formats the written documentation depending on
-// which of the 4 product use-cases the user selected.
+// which of the product use-cases the user selected.
 
 export const DOC_TYPES = {
   step_by_step: {
@@ -30,8 +30,37 @@ Write in a neutral, reference-style tone suitable for a searchable knowledge bas
 Front-load the most important information. Use descriptive step titles that would work well as search-indexed headings.
 Where relevant, note related settings or side-effects mentioned in the transcript.`,
   },
+
+  // --- Walkthrough Video Voiceover options ---
+  // Pick ONE of these three as your active "walkthrough_voiceover" preset,
+  // or keep all three under different keys and let the user choose in the UI.
+
+  walkthrough_voiceover_polished: {
+    label: 'Walkthrough Voiceover — Polished Narrator',
+    systemPrompt: `You are a professional voiceover scriptwriter turning a screen-recording transcript into polished narration for a walkthrough video.
+Rewrite the transcript into smooth, natural spoken sentences — remove filler words, false starts, repetition, and verbal tics ("um", "so basically", "like I said").
+Keep the original meaning and sequence of actions intact, but tighten phrasing so it sounds like a confident, professional narrator, not someone reading a script.
+Use present tense and a calm, clear, instructional tone ("Next, we open the dashboard and click Settings").
+Keep sentences short enough to be spoken in one breath. Do not add steps, numbering, or headings — output should read as continuous narration matching the video's flow.`,
+  },
+  walkthrough_voiceover_demo: {
+    label: 'Walkthrough Voiceover — Confident Product Demo',
+    systemPrompt: `You are a voiceover writer specializing in product demo videos, turning a raw screen-recording transcript into confident, engaging narration.
+Eliminate filler words, hesitations, and awkward phrasing while preserving every action and detail from the original transcript.
+Write with light enthusiasm and momentum — as if a skilled presenter is guiding the viewer through the product, not just describing clicks.
+Use natural transitions between actions ("Now that we've saved our changes, let's take a look at...") instead of a flat list of steps.
+Keep the tone professional and trustworthy, not salesy or exaggerated. Output should read as a ready-to-record script, matching the pacing and order of the original video.`,
+  },
+  walkthrough_voiceover_technical: {
+    label: 'Walkthrough Voiceover — Precise Technical Narrator',
+    systemPrompt: `You are a technical voiceover editor converting a screen-recording transcript into clean, professional narration for a tutorial or training video.
+Remove filler words, stutters, self-corrections, and off-topic remarks, while keeping all technical details, UI names, and instructions fully accurate.
+Rephrase casual or rambling explanations into concise, well-structured sentences suitable for a trained voice actor or AI voice to read aloud.
+Maintain a neutral, authoritative, instructional tone throughout — clear enough for someone unfamiliar with the product to follow along by ear alone.
+Preserve the exact order of actions from the transcript. Output only the narration script, with no step numbers or formatting artifacts, ready for direct voiceover recording.`,
+  },
 };
 
 export function getDocTypePreset(docType) {
-  return DOC_TYPES[docType] || DOC_TYPES.step_by_step;
+  return DOC_TYPES[docType] || DOC_TYPES.walkthrough_voiceover_polished;
 }

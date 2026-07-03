@@ -127,12 +127,45 @@ export async function generateAiVoice(projectId, project, options = {}) {
     const sequence = [];
     let cursor = 0;
 
+    // for (const part of parts) {
+    //   // Apply the narration offset: push the clip start forward so the screen
+    //   // action has time to appear before the AI voice begins describing it.
+    //   // Clamp to 0 so we never seek backward if the offset overshoots.
+    //   const targetStart = Math.max(0, part.start + NARRATION_START_OFFSET);
+    //   const gap = targetStart - cursor;
+    //   if (gap > MIN_GAP_SECONDS) {
+    //     const silPath = path.join(workDir, `sil_${part.index}.wav`);
+    //     await generateSilence(gap, silPath);
+    //     sequence.push(silPath);
+    //     cursor += gap;
+    //   }
+
+    //   const slotDuration = Math.max(part.end - part.start, 0.05);
+    //   let clipPath = part.filePath;
+    //   let clipDuration = part.duration;
+
+    //   if (clipDuration > slotDuration * OVERFLOW_TOLERANCE) {
+    //     const neededFactor = Math.min(clipDuration / slotDuration, MAX_SPEEDUP_FACTOR);
+    //     if (neededFactor > 1.02) {
+    //       const fastPath = path.join(workDir, `step_${part.index}_fast.wav`);
+    //       await speedUpAudio(clipPath, fastPath, neededFactor);
+    //       clipPath = fastPath;
+    //       clipDuration = await getAudioDuration(fastPath);
+    //     }
+    //     // If still over (factor was capped), we accept the drift — the
+    //     // next segment's gap calculation will simply come out as 0 instead
+    //     // of negative, and the timeline self-corrects from there.
+    //   }
+
+    //   sequence.push(clipPath);
+    //   cursor += clipDuration;
+    // }
+
+
     for (const part of parts) {
-      // Apply the narration offset: push the clip start forward so the screen
-      // action has time to appear before the AI voice begins describing it.
-      // Clamp to 0 so we never seek backward if the offset overshoots.
       const targetStart = Math.max(0, part.start + NARRATION_START_OFFSET);
       const gap = targetStart - cursor;
+
       if (gap > MIN_GAP_SECONDS) {
         const silPath = path.join(workDir, `sil_${part.index}.wav`);
         await generateSilence(gap, silPath);
@@ -140,26 +173,11 @@ export async function generateAiVoice(projectId, project, options = {}) {
         cursor += gap;
       }
 
-      const slotDuration = Math.max(part.end - part.start, 0.05);
-      let clipPath = part.filePath;
-      let clipDuration = part.duration;
-
-      if (clipDuration > slotDuration * OVERFLOW_TOLERANCE) {
-        const neededFactor = Math.min(clipDuration / slotDuration, MAX_SPEEDUP_FACTOR);
-        if (neededFactor > 1.02) {
-          const fastPath = path.join(workDir, `step_${part.index}_fast.wav`);
-          await speedUpAudio(clipPath, fastPath, neededFactor);
-          clipPath = fastPath;
-          clipDuration = await getAudioDuration(fastPath);
-        }
-        // If still over (factor was capped), we accept the drift — the
-        // next segment's gap calculation will simply come out as 0 instead
-        // of negative, and the timeline self-corrects from there.
-      }
-
-      sequence.push(clipPath);
-      cursor += clipDuration;
+      // Just play the clip at natural speed — no slot enforcement, no speedup
+      sequence.push(part.filePath);
+      cursor += part.duration;
     }
+
 
     // 3. Pad the tail so the track matches the full video length.
     const videoDuration = project.duration_seconds || cursor;
