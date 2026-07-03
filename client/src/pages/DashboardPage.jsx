@@ -9,7 +9,17 @@ const DOC_TYPE_LABELS = {
   sop: 'SOP',
   help_center: 'Help Center Article',
   knowledge_base: 'Knowledge Base Article',
+  walkthrough_voiceover_polished: 'AI Video — Polished',
+  walkthrough_voiceover_demo: 'AI Video — Demo',
+  walkthrough_voiceover_technical: 'AI Video — Technical',
 };
+
+// Projects created via the "New AI video" flow — clicking into one of
+// these should go straight to the voice-over page, not the doc editor,
+// since that's the only thing the user ever asked to see for these.
+const FLOWING_DOC_TYPES = new Set([
+  'walkthrough_voiceover_polished', 'walkthrough_voiceover_demo', 'walkthrough_voiceover_technical',
+]);
 
 const IN_PROGRESS = new Set([
   'extracting_audio', 'transcribing', 'writing_doc', 'extracting_frames', 'matching_screenshots',
@@ -66,8 +76,11 @@ export default function DashboardPage() {
       {projects?.length === 0 && (
         <div className="empty-state">
           <p className="empty-state-title">No documentation yet</p>
-          <p className="empty-state-body">Upload a screen recording to generate your first guide.</p>
-          <Link to="/new" className="btn btn-primary">+ New documentation</Link>
+          <p className="empty-state-body">Upload a screen recording to generate your first guide — or skip straight to an AI voice-over video.</p>
+          <div className="empty-state-actions">
+            <Link to="/new" className="btn btn-primary">+ New documentation</Link>
+            <Link to="/new?mode=video" className="btn btn-secondary">+ New AI video</Link>
+          </div>
         </div>
       )}
 
@@ -100,7 +113,11 @@ export default function DashboardPage() {
       {filtered && filtered.length > 0 && (
         <div className="project-grid">
           {filtered.map((p) => (
-            <Link to={`/projects/${p.id}`} key={p.id} className="project-card">
+            <Link
+              to={FLOWING_DOC_TYPES.has(p.doc_type) ? `/projects/${p.id}/voice` : `/projects/${p.id}`}
+              key={p.id}
+              className="project-card"
+            >
               <div className="project-card-top">
                 <span className="project-doctype">{DOC_TYPE_LABELS[p.doc_type] || p.doc_type}</span>
                 <StatusPill status={p.status} />

@@ -70,6 +70,12 @@
 .empty-state-body {
   margin: 0 0 20px;
 }
+.empty-state-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
 .project-grid {
   display: grid;

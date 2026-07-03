@@ -20,9 +20,14 @@ function Header() {
       <div className="header-actions">
         <Link to="/settings" className="btn btn-ghost btn-sm">Settings</Link>
         {isHome && (
-          <Link to="/new" className="btn btn-primary">
-            + New documentation
-          </Link>
+          <>
+            <Link to="/new?mode=video" className="btn btn-secondary">
+              + New AI video
+            </Link>
+            <Link to="/new" className="btn btn-primary">
+              + New documentation
+            </Link>
+          </>
         )}
       </div>
     </header>

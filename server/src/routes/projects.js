@@ -54,7 +54,11 @@ export const projectsRouter = express.Router();
  *                   label: Knowledge base article
  */
 projectsRouter.get('/doc-types', (req, res) => {
-  const types = Object.entries(DOC_TYPES).map(([key, val]) => ({ key, label: val.label }));
+  const types = Object.entries(DOC_TYPES).map(([key, val]) => ({
+    key,
+    label: val.label,
+    flowing: Boolean(val.flowing),
+  }));
   res.json({ types });
 });
 
