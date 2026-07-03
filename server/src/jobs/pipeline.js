@@ -196,6 +196,8 @@ async function generateDocAndScreenshots(projectId, project, opts) {
     summary: structured.summary,
     prerequisites: structured.prerequisites,
     audience: structured.audience,
+    introNarration: structured.introNarration,
+    outroNarration: structured.outroNarration,
   });
 
   setProjectStatus(projectId, 'matching_screenshots');

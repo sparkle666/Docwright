@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { updateProject, listSteps, logUsage } from '../db/repository.js';
+import { updateProject, listSteps, getDocMeta, logUsage } from '../db/repository.js';
 import {
   getAudioDuration, convertToStandardWav, generateSilence, speedUpAudio,
   concatAudioFiles, muxAudioIntoVideo,
@@ -24,6 +24,9 @@ const MIN_GAP_SECONDS = 0.03;
 // with network lag). This offset lets the visual catch up before the AI
 // voice starts describing it. Tune this value if audio still leads the screen.
 const NARRATION_START_OFFSET = 2.0;
+// A short breath before the closing line, so the outro doesn't slam
+// into the end of the last step's narration.
+const OUTRO_LEAD_PAUSE_SECONDS = 0.6;
 
 /**
  * Generates a full AI voice-over for a project and replaces its video's
@@ -105,6 +108,51 @@ export async function generateAiVoice(projectId, project, options = {}) {
 
     fs.mkdirSync(workDir, { recursive: true });
 
+    // 0. Optional spoken intro/outro for "flowing" (walkthrough voiceover)
+    //    doc types. Without these the narration used to launch straight
+    //    into the first click with zero framing. Both lines are generated
+    //    alongside the rest of the doc by generateStructuredDoc() and
+    //    stored in doc_meta — here we just synthesize + measure them.
+    let introClip = null;
+    let outroClip = null;
+    if (flowing) {
+      const docMeta = getDocMeta(projectId);
+      const introText = stripMarkdownForTTS(docMeta?.intro_narration || '').trim();
+      const outroText = stripMarkdownForTTS(docMeta?.outro_narration || '').trim();
+
+      if (introText) {
+        const { buffer, usage } = await synthesizeSegmentAudio({ text: introText, voice, model });
+        const rawPath = path.join(workDir, 'intro_raw.wav');
+        fs.writeFileSync(rawPath, buffer);
+        const normPath = path.join(workDir, 'intro_norm.wav');
+        await convertToStandardWav(rawPath, normPath);
+        const duration = await getAudioDuration(normPath);
+        introClip = { filePath: normPath, duration };
+        logUsage(projectId, {
+          service: 'tts',
+          model,
+          inputTokens: usage?.prompt_tokens ?? Math.ceil(introText.split(/\s+/).length * 1.3),
+          outputTokens: Math.ceil(duration * 20),
+        });
+      }
+
+      if (outroText) {
+        const { buffer, usage } = await synthesizeSegmentAudio({ text: outroText, voice, model });
+        const rawPath = path.join(workDir, 'outro_raw.wav');
+        fs.writeFileSync(rawPath, buffer);
+        const normPath = path.join(workDir, 'outro_norm.wav');
+        await convertToStandardWav(rawPath, normPath);
+        const duration = await getAudioDuration(normPath);
+        outroClip = { filePath: normPath, duration };
+        logUsage(projectId, {
+          service: 'tts',
+          model,
+          inputTokens: usage?.prompt_tokens ?? Math.ceil(outroText.split(/\s+/).length * 1.3),
+          outputTokens: Math.ceil(duration * 20),
+        });
+      }
+    }
+
     // 1. Synthesize + normalize each step's narration, measuring real clip duration.
     const parts = [];
     for (let i = 0; i < steps.length; i++) {
@@ -140,46 +188,21 @@ export async function generateAiVoice(projectId, project, options = {}) {
 
     updateProject(projectId, { voice_status: 'stitching' });
 
-    // 2. Walk segments in timeline order, inserting silence gaps and
-    //    speeding up overlong clips so the result tracks the original
-    //    pacing as closely as possible without distorting the voice.
+    // 2. Walk segments in timeline order, inserting silence gaps to land
+    //    each clip at its step's timestamp. No slot-fitting/speedup is
+    //    applied — clips play at natural TTS pacing and any overrun just
+    //    shows up as a smaller (or zero) gap before the next clip.
     const sequence = [];
     let cursor = 0;
 
-    // for (const part of parts) {
-    //   // Apply the narration offset: push the clip start forward so the screen
-    //   // action has time to appear before the AI voice begins describing it.
-    //   // Clamp to 0 so we never seek backward if the offset overshoots.
-    //   const targetStart = Math.max(0, part.start + NARRATION_START_OFFSET);
-    //   const gap = targetStart - cursor;
-    //   if (gap > MIN_GAP_SECONDS) {
-    //     const silPath = path.join(workDir, `sil_${part.index}.wav`);
-    //     await generateSilence(gap, silPath);
-    //     sequence.push(silPath);
-    //     cursor += gap;
-    //   }
-
-    //   const slotDuration = Math.max(part.end - part.start, 0.05);
-    //   let clipPath = part.filePath;
-    //   let clipDuration = part.duration;
-
-    //   if (clipDuration > slotDuration * OVERFLOW_TOLERANCE) {
-    //     const neededFactor = Math.min(clipDuration / slotDuration, MAX_SPEEDUP_FACTOR);
-    //     if (neededFactor > 1.02) {
-    //       const fastPath = path.join(workDir, `step_${part.index}_fast.wav`);
-    //       await speedUpAudio(clipPath, fastPath, neededFactor);
-    //       clipPath = fastPath;
-    //       clipDuration = await getAudioDuration(fastPath);
-    //     }
-    //     // If still over (factor was capped), we accept the drift — the
-    //     // next segment's gap calculation will simply come out as 0 instead
-    //     // of negative, and the timeline self-corrects from there.
-    //   }
-
-    //   sequence.push(clipPath);
-    //   cursor += clipDuration;
-    // }
-
+    // Intro plays at the very start of the timeline, before any of the
+    // step-timestamp gap logic kicks in. If it happens to run longer than
+    // the first step's target start, we simply accept that drift (same
+    // philosophy as the overflow handling below) rather than truncating it.
+    if (introClip) {
+      sequence.push(introClip.filePath);
+      cursor += introClip.duration;
+    }
 
     for (const part of parts) {
       const targetStart = Math.max(0, part.start + NARRATION_START_OFFSET);
@@ -197,6 +220,17 @@ export async function generateAiVoice(projectId, project, options = {}) {
       cursor += part.duration;
     }
 
+    // Outro plays right after the last step, with a brief breath before it
+    // so it doesn't slam into the end of the final line.
+    if (outroClip) {
+      const silPath = path.join(workDir, 'sil_outro.wav');
+      await generateSilence(OUTRO_LEAD_PAUSE_SECONDS, silPath);
+      sequence.push(silPath);
+      cursor += OUTRO_LEAD_PAUSE_SECONDS;
+
+      sequence.push(outroClip.filePath);
+      cursor += outroClip.duration;
+    }
 
     // 3. Pad the tail so the track matches the full video length.
     const videoDuration = project.duration_seconds || cursor;

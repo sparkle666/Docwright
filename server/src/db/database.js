@@ -65,7 +65,9 @@ export function initSchema() {
       project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
       summary TEXT,
       prerequisites TEXT,
-      audience TEXT
+      audience TEXT,
+      intro_narration TEXT,
+      outro_narration TEXT
     );
 
     -- Tracks OpenAI token usage per pipeline call for cost visibility
@@ -144,6 +146,18 @@ function migrateColumns() {
   }
   if (!hasColumn('projects', 'voice_generated_at')) {
     db.exec(`ALTER TABLE projects ADD COLUMN voice_generated_at TEXT`);
+  }
+
+  // Spoken intro/outro lines for the walkthrough-voiceover doc types — a
+  // short natural sentence framing the video's purpose ("How to update
+  // your account information.") and a short wrap-up line, generated
+  // alongside the rest of the doc so the AI voice-over doesn't have to
+  // launch straight into step 1 with no context.
+  if (!hasColumn('doc_meta', 'intro_narration')) {
+    db.exec(`ALTER TABLE doc_meta ADD COLUMN intro_narration TEXT`);
+  }
+  if (!hasColumn('doc_meta', 'outro_narration')) {
+    db.exec(`ALTER TABLE doc_meta ADD COLUMN outro_narration TEXT`);
   }
 }
 

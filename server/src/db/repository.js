@@ -202,15 +202,17 @@ export function getStepHistoryEntry(historyId) {
 
 // ─── Doc Meta ────────────────────────────────────────────────────────────────
 
-export function upsertDocMeta(projectId, { summary, prerequisites, audience }) {
+export function upsertDocMeta(projectId, { summary, prerequisites, audience, introNarration = '', outroNarration = '' }) {
   db.prepare(`
-    INSERT INTO doc_meta (project_id, summary, prerequisites, audience)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO doc_meta (project_id, summary, prerequisites, audience, intro_narration, outro_narration)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
       summary = excluded.summary,
       prerequisites = excluded.prerequisites,
-      audience = excluded.audience
-  `).run(projectId, summary, prerequisites, audience);
+      audience = excluded.audience,
+      intro_narration = excluded.intro_narration,
+      outro_narration = excluded.outro_narration
+  `).run(projectId, summary, prerequisites, audience, introNarration, outroNarration);
   return getDocMeta(projectId);
 }
 
