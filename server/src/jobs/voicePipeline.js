@@ -6,6 +6,7 @@ import {
   concatAudioFiles, muxAudioIntoVideo,
 } from '../services/ffmpegService.js';
 import { synthesizeSegmentAudio, stripMarkdownForTTS, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
+import { getDocTypePreset } from '../services/docTypePresets.js';
 
 const STORAGE_ROOT = path.join(process.cwd(), 'storage');
 
@@ -73,11 +74,29 @@ export async function generateAiVoice(projectId, project, options = {}) {
       );
     }
 
-    // Build the narration text for each step: "Step N — Title. Body." with
-    // all markdown stripped so the TTS never reads out asterisks or backticks.
+    // Whether this project's doc-type preset wants continuous, natural
+    // narration (e.g. the walkthrough-voiceover presets) rather than a
+    // read-aloud numbered list. Presets opt into this via `flowing: true`
+    // in docTypePresets.js.
+    const preset = getDocTypePreset(project.doc_type);
+    const flowing = Boolean(preset.flowing);
+
+    // Build the narration text for each step, with all markdown stripped
+    // so the TTS never reads out asterisks or backticks.
+    //
+    // For "flowing" presets we deliberately do NOT prepend "Step N. Title." —
+    // that prefix was being stitched on unconditionally for every doc type,
+    // which is why walkthrough-voiceover output still sounded like a
+    // numbered checklist even though its system prompt asks for continuous
+    // prose. Flowing narration speaks the generated body text as-is.
     function buildStepNarration(step, index) {
       const titleText = stripMarkdownForTTS(step.title || '').trim();
       const bodyText = stripMarkdownForTTS(step.body_markdown || '').trim();
+
+      if (flowing) {
+        return bodyText || titleText;
+      }
+
       const parts = [];
       if (titleText) parts.push(`Step ${index + 1}. ${titleText}.`);
       if (bodyText) parts.push(bodyText);

@@ -37,6 +37,11 @@ Where relevant, note related settings or side-effects mentioned in the transcrip
 
   walkthrough_voiceover_polished: {
     label: 'Walkthrough Voiceover — Polished Narrator',
+    // `flowing: true` tells the voice pipeline to skip the "Step N. Title."
+    // prefix it normally stitches onto every clip — that prefix is what was
+    // making the voiceover sound like a numbered list being read aloud,
+    // even though this prompt already asks GPT for continuous prose.
+    flowing: true,
     systemPrompt: `You are a professional voiceover scriptwriter turning a screen-recording transcript into polished narration for a walkthrough video.
 Rewrite the transcript into smooth, natural spoken sentences — remove filler words, false starts, repetition, and verbal tics ("um", "so basically", "like I said").
 Keep the original meaning and sequence of actions intact, but tighten phrasing so it sounds like a confident, professional narrator, not someone reading a script.
@@ -45,6 +50,7 @@ Keep sentences short enough to be spoken in one breath. Do not add steps, number
   },
   walkthrough_voiceover_demo: {
     label: 'Walkthrough Voiceover — Confident Product Demo',
+    flowing: true,
     systemPrompt: `You are a voiceover writer specializing in product demo videos, turning a raw screen-recording transcript into confident, engaging narration.
 Eliminate filler words, hesitations, and awkward phrasing while preserving every action and detail from the original transcript.
 Write with light enthusiasm and momentum — as if a skilled presenter is guiding the viewer through the product, not just describing clicks.
@@ -53,6 +59,7 @@ Keep the tone professional and trustworthy, not salesy or exaggerated. Output sh
   },
   walkthrough_voiceover_technical: {
     label: 'Walkthrough Voiceover — Precise Technical Narrator',
+    flowing: true,
     systemPrompt: `You are a technical voiceover editor converting a screen-recording transcript into clean, professional narration for a tutorial or training video.
 Remove filler words, stutters, self-corrections, and off-topic remarks, while keeping all technical details, UI names, and instructions fully accurate.
 Rephrase casual or rambling explanations into concise, well-structured sentences suitable for a trained voice actor or AI voice to read aloud.
@@ -62,5 +69,5 @@ Preserve the exact order of actions from the transcript. Output only the narrati
 };
 
 export function getDocTypePreset(docType) {
-  return DOC_TYPES[docType] || DOC_TYPES.walkthrough_voiceover_polished;
+  return DOC_TYPES[docType] || DOC_TYPES.step_by_step;
 }

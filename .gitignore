@@ -4,6 +4,7 @@ node_modules/
 
 # Server storage (uploaded videos, extracted frames/audio, sqlite db)
 server/storage/uploads/*
+server/storage/originals/*
 server/storage/frames/*
 server/storage/audio/*
 server/storage/exports/*
