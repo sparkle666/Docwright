@@ -1731,12 +1731,24 @@ projectsRouter.get('/projects/:id/talking-head/status', (req, res) => {
     fs.existsSync(project.talking_head_backup_path),
   );
 
+  // Count persisted raw Replicate clips so the client can surface a
+  // "N chunk(s) saved" badge without an extra round-trip.
+  let savedChunkCount = 0;
+  const chunksDir = project.talking_head_chunks_dir;
+  if (chunksDir && fs.existsSync(chunksDir)) {
+    try {
+      savedChunkCount = fs.readdirSync(chunksDir).filter((f) => f.endsWith('.mp4')).length;
+    } catch { /* non-fatal */ }
+  }
+
   res.json({
     talkingHeadStatus:      project.talking_head_status || null,
     talkingHeadError:       project.talking_head_error || null,
     talkingHeadGeneratedAt: project.talking_head_generated_at || null,
     talkingHeadVoice:       project.voice_name || null,
     canRestore,
+    savedChunkCount,
+    chunksDir: chunksDir || null,
   });
 });
 
@@ -1754,4 +1766,112 @@ projectsRouter.post('/projects/:id/talking-head/restore', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * @openapi
+ * /api/projects/{id}/talking-head/chunks:
+ *   get:
+ *     summary: List saved raw Replicate clips for this project
+ *     description: |
+ *       Returns metadata for every raw talking-head clip that was persisted
+ *       from Replicate during generation. Each entry includes a `downloadUrl`
+ *       so you can fetch the clip directly. Clips survive pipeline failures
+ *       and workDir cleanup — use them to manually review or re-edit
+ *       individual segments without re-paying for generation.
+ *     tags: [Talking Head]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: List of saved chunks
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 chunksDir: { type: string }
+ *                 chunks:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       filename:    { type: string }
+ *                       sizeBytes:   { type: integer }
+ *                       createdAt:   { type: string, format: date-time }
+ *                       downloadUrl: { type: string }
+ *       404:
+ *         description: Project not found or no chunks saved yet
+ */
+projectsRouter.get('/projects/:id/talking-head/chunks', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const chunksDir = project.talking_head_chunks_dir;
+  if (!chunksDir || !fs.existsSync(chunksDir)) {
+    return res.json({ chunksDir: chunksDir || null, chunks: [] });
+  }
+
+  const entries = fs.readdirSync(chunksDir)
+    .filter((f) => f.endsWith('.mp4'))
+    .map((filename) => {
+      const filePath = path.join(chunksDir, filename);
+      const stat = fs.statSync(filePath);
+      return {
+        filename,
+        sizeBytes: stat.size,
+        createdAt: stat.birthtime.toISOString(),
+        downloadUrl: `/api/projects/${req.params.id}/talking-head/chunks/${encodeURIComponent(filename)}`,
+      };
+    })
+    .sort((a, b) => a.filename.localeCompare(b.filename));
+
+  res.json({ chunksDir, chunks: entries });
+});
+
+/**
+ * @openapi
+ * /api/projects/{id}/talking-head/chunks/{filename}:
+ *   get:
+ *     summary: Download a single saved raw Replicate clip
+ *     tags: [Talking Head]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: The raw MP4 clip
+ *         content:
+ *           video/mp4:
+ *             schema: { type: string, format: binary }
+ *       404:
+ *         description: Chunk not found
+ */
+projectsRouter.get('/projects/:id/talking-head/chunks/:filename', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const chunksDir = project.talking_head_chunks_dir;
+  if (!chunksDir) return res.status(404).json({ error: 'No chunks saved for this project' });
+
+  // Sanitise filename: strip any path traversal attempts.
+  const safeName = path.basename(req.params.filename);
+  const filePath = path.join(chunksDir, safeName);
+
+  if (!filePath.startsWith(chunksDir) || !fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Chunk not found' });
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  res.setHeader('Content-Type', 'video/mp4');
+  res.sendFile(filePath);
 });

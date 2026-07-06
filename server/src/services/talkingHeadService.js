@@ -65,8 +65,17 @@ function mimeForAudio(filePath) {
  * segment's own audio as the drive signal and the presenter still image as
  * the face to animate. Returns the raw downloaded clip's local path.
  * Docs: https://replicate.com/prunaai/p-video-avatar
+ *
+ * @param {object} opts
+ * @param {string}  opts.segmentAudioPath - WAV/MP3 for this speech segment
+ * @param {string}  opts.outputPath       - Where to write the downloaded clip
+ * @param {string}  [opts.resolution]     - '480p' | '720p' | '1080p'
+ * @param {string}  [opts.chunksDir]      - If set, a copy of every raw clip
+ *                                          returned by Replicate is saved here
+ *                                          so you never lose a paid generation.
+ * @param {number}  [opts.segmentIndex]   - Used in the persisted filename.
  */
-async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p' }) {
+async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p', chunksDir, segmentIndex }) {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) {
     throw new Error('REPLICATE_API_TOKEN is not set on the server.');
@@ -121,7 +130,23 @@ async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p'
   if (!videoRes.ok) {
     throw new Error(`Failed to download avatar clip: ${videoRes.status}`);
   }
-  fs.writeFileSync(outputPath, Buffer.from(await videoRes.arrayBuffer()));
+  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+  fs.writeFileSync(outputPath, videoBuffer);
+
+  // ── Persist a copy to chunksDir so every paid Replicate generation
+  //    survives even if the final composite fails or the workDir is wiped.
+  if (chunksDir) {
+    try {
+      fs.mkdirSync(chunksDir, { recursive: true });
+      const idx = segmentIndex !== undefined ? String(segmentIndex).padStart(4, '0') : Date.now();
+      const chunkName = `chunk_${idx}_${prediction.id}.mp4`;
+      fs.writeFileSync(path.join(chunksDir, chunkName), videoBuffer);
+    } catch (saveErr) {
+      // Non-fatal — log but never let a save failure abort the pipeline.
+      console.warn('[talkingHeadService] Could not persist chunk to chunksDir:', saveErr.message);
+    }
+  }
+
   return outputPath;
 }
 
@@ -196,8 +221,11 @@ async function buildStillClip(durationSeconds, outputPath, meta) {
  * @param {string} opts.audioPath      - Path to the full stitched narration WAV
  * @param {number} opts.targetDuration - Total seconds the output video must run for
  * @param {string} opts.outputPath     - Where to write the resulting MP4
+ * @param {string} [opts.resolution]   - '480p' | '720p' | '1080p'
+ * @param {string} [opts.chunksDir]    - Persistent directory to save every raw
+ *                                       Replicate clip so no generation is lost.
  */
-export async function generateTalkingHeadVideo({ segments, audioPath, targetDuration, outputPath, resolution = '720p' }) {
+export async function generateTalkingHeadVideo({ segments, audioPath, targetDuration, outputPath, resolution = '720p', chunksDir }) {
   if (!fs.existsSync(STILL_IMAGE_PATH)) {
     throw new Error(
       `Presenter still image not found at ${STILL_IMAGE_PATH}. ` +
@@ -222,7 +250,13 @@ export async function generateTalkingHeadVideo({ segments, audioPath, targetDura
 
       if (seg.type === 'speech') {
         const rawPath = path.join(workDir, `raw_${String(i).padStart(4, '0')}.mp4`);
-        await callAvatarApi({ segmentAudioPath: seg.filePath, outputPath: rawPath, resolution });
+        await callAvatarApi({
+          segmentAudioPath: seg.filePath,
+          outputPath: rawPath,
+          resolution,
+          chunksDir,
+          segmentIndex: i,
+        });
         await normalizeToExactDuration(rawPath, seg.duration, clipPath, meta);
         fs.rmSync(rawPath, { force: true });
       } else {

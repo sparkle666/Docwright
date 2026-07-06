@@ -1,0 +1,267 @@
+diff --git a/server/src/db/database.js b/server/src/db/database.js
+index 94f308d..ebf2c54 100644
+--- a/server/src/db/database.js
++++ b/server/src/db/database.js
+@@ -175,6 +175,11 @@ function migrateColumns() {
+   if (!hasColumn('projects', 'talking_head_backup_path')) {
+     db.exec(`ALTER TABLE projects ADD COLUMN talking_head_backup_path TEXT`);
+   }
++  // Directory where every raw Replicate clip for this project is persisted,
++  // keyed by segment index and prediction ID, so no paid generation is lost.
++  if (!hasColumn('projects', 'talking_head_chunks_dir')) {
++    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_chunks_dir TEXT`);
++  }
+ 
+ }
+ 
+diff --git a/server/src/jobs/talkingHeadPipeline.js b/server/src/jobs/talkingHeadPipeline.js
+index 82e8a36..9256b72 100644
+--- a/server/src/jobs/talkingHeadPipeline.js
++++ b/server/src/jobs/talkingHeadPipeline.js
+@@ -176,13 +176,21 @@ export async function generateTalkingHead(projectId, project, options = {}) {
+     // as the drive signal; silence segments are filled with a frozen still
+     // of the presenter so they don't appear to keep talking with no audio.
+     // The full narration audio is muxed in as the single audio track.
++    //
++    // Each raw clip returned by Replicate is also saved to a persistent
++    // chunks directory keyed to this project so you can recover any paid
++    // generation even if the composite step fails or the workDir is wiped.
+     updateProject(projectId, { talking_head_status: 'rendering' });
++    const chunksDir = path.join(STORAGE_ROOT, 'talking_head_chunks', projectId);
++    fs.mkdirSync(chunksDir, { recursive: true });
++
+     const talkingHeadVideoPath = path.join(workDir, 'talking_head.mp4');
+     await generateTalkingHeadVideo({
+       segments: sequence,
+       audioPath: stitchedAudioPath,
+       targetDuration: narrationDuration,
+       outputPath: talkingHeadVideoPath,
++      chunksDir,
+     });
+ 
+     // ── 6. Back up original (one-time, same as voicePipeline) ───────────
+@@ -225,6 +233,7 @@ export async function generateTalkingHead(projectId, project, options = {}) {
+     updateProject(projectId, {
+       talking_head_status: 'complete',
+       talking_head_backup_path: backupPath,
++      talking_head_chunks_dir: chunksDir,
+       talking_head_generated_at: new Date().toISOString(),
+       duration_seconds: finalDurationSeconds,
+     });
+diff --git a/server/src/routes/projects.js b/server/src/routes/projects.js
+index 7c51194..0cab613 100644
+--- a/server/src/routes/projects.js
++++ b/server/src/routes/projects.js
+@@ -1731,12 +1731,24 @@ projectsRouter.get('/projects/:id/talking-head/status', (req, res) => {
+     fs.existsSync(project.talking_head_backup_path),
+   );
+ 
++  // Count persisted raw Replicate clips so the client can surface a
++  // "N chunk(s) saved" badge without an extra round-trip.
++  let savedChunkCount = 0;
++  const chunksDir = project.talking_head_chunks_dir;
++  if (chunksDir && fs.existsSync(chunksDir)) {
++    try {
++      savedChunkCount = fs.readdirSync(chunksDir).filter((f) => f.endsWith('.mp4')).length;
++    } catch { /* non-fatal */ }
++  }
++
+   res.json({
+     talkingHeadStatus:      project.talking_head_status || null,
+     talkingHeadError:       project.talking_head_error || null,
+     talkingHeadGeneratedAt: project.talking_head_generated_at || null,
+     talkingHeadVoice:       project.voice_name || null,
+     canRestore,
++    savedChunkCount,
++    chunksDir: chunksDir || null,
+   });
+ });
+ 
+@@ -1755,3 +1767,111 @@ projectsRouter.post('/projects/:id/talking-head/restore', async (req, res) => {
+     res.status(500).json({ error: err.message });
+   }
+ });
++
++/**
++ * @openapi
++ * /api/projects/{id}/talking-head/chunks:
++ *   get:
++ *     summary: List saved raw Replicate clips for this project
++ *     description: |
++ *       Returns metadata for every raw talking-head clip that was persisted
++ *       from Replicate during generation. Each entry includes a `downloadUrl`
++ *       so you can fetch the clip directly. Clips survive pipeline failures
++ *       and workDir cleanup — use them to manually review or re-edit
++ *       individual segments without re-paying for generation.
++ *     tags: [Talking Head]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema: { type: string }
++ *     responses:
++ *       200:
++ *         description: List of saved chunks
++ *         content:
++ *           application/json:
++ *             schema:
++ *               type: object
++ *               properties:
++ *                 chunksDir: { type: string }
++ *                 chunks:
++ *                   type: array
++ *                   items:
++ *                     type: object
++ *                     properties:
++ *                       filename:    { type: string }
++ *                       sizeBytes:   { type: integer }
++ *                       createdAt:   { type: string, format: date-time }
++ *                       downloadUrl: { type: string }
++ *       404:
++ *         description: Project not found or no chunks saved yet
++ */
++projectsRouter.get('/projects/:id/talking-head/chunks', (req, res) => {
++  const project = getProject(req.params.id);
++  if (!project) return res.status(404).json({ error: 'Project not found' });
++
++  const chunksDir = project.talking_head_chunks_dir;
++  if (!chunksDir || !fs.existsSync(chunksDir)) {
++    return res.json({ chunksDir: chunksDir || null, chunks: [] });
++  }
++
++  const entries = fs.readdirSync(chunksDir)
++    .filter((f) => f.endsWith('.mp4'))
++    .map((filename) => {
++      const filePath = path.join(chunksDir, filename);
++      const stat = fs.statSync(filePath);
++      return {
++        filename,
++        sizeBytes: stat.size,
++        createdAt: stat.birthtime.toISOString(),
++        downloadUrl: `/api/projects/${req.params.id}/talking-head/chunks/${encodeURIComponent(filename)}`,
++      };
++    })
++    .sort((a, b) => a.filename.localeCompare(b.filename));
++
++  res.json({ chunksDir, chunks: entries });
++});
++
++/**
++ * @openapi
++ * /api/projects/{id}/talking-head/chunks/{filename}:
++ *   get:
++ *     summary: Download a single saved raw Replicate clip
++ *     tags: [Talking Head]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema: { type: string }
++ *       - in: path
++ *         name: filename
++ *         required: true
++ *         schema: { type: string }
++ *     responses:
++ *       200:
++ *         description: The raw MP4 clip
++ *         content:
++ *           video/mp4:
++ *             schema: { type: string, format: binary }
++ *       404:
++ *         description: Chunk not found
++ */
++projectsRouter.get('/projects/:id/talking-head/chunks/:filename', (req, res) => {
++  const project = getProject(req.params.id);
++  if (!project) return res.status(404).json({ error: 'Project not found' });
++
++  const chunksDir = project.talking_head_chunks_dir;
++  if (!chunksDir) return res.status(404).json({ error: 'No chunks saved for this project' });
++
++  // Sanitise filename: strip any path traversal attempts.
++  const safeName = path.basename(req.params.filename);
++  const filePath = path.join(chunksDir, safeName);
++
++  if (!filePath.startsWith(chunksDir) || !fs.existsSync(filePath)) {
++    return res.status(404).json({ error: 'Chunk not found' });
++  }
++
++  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
++  res.setHeader('Content-Type', 'video/mp4');
++  res.sendFile(filePath);
++});
+diff --git a/server/src/services/talkingHeadService.js b/server/src/services/talkingHeadService.js
+index aa0bc1d..d7f2cbc 100644
+--- a/server/src/services/talkingHeadService.js
++++ b/server/src/services/talkingHeadService.js
+@@ -65,8 +65,17 @@ function mimeForAudio(filePath) {
+  * segment's own audio as the drive signal and the presenter still image as
+  * the face to animate. Returns the raw downloaded clip's local path.
+  * Docs: https://replicate.com/prunaai/p-video-avatar
++ *
++ * @param {object} opts
++ * @param {string}  opts.segmentAudioPath - WAV/MP3 for this speech segment
++ * @param {string}  opts.outputPath       - Where to write the downloaded clip
++ * @param {string}  [opts.resolution]     - '480p' | '720p' | '1080p'
++ * @param {string}  [opts.chunksDir]      - If set, a copy of every raw clip
++ *                                          returned by Replicate is saved here
++ *                                          so you never lose a paid generation.
++ * @param {number}  [opts.segmentIndex]   - Used in the persisted filename.
+  */
+-async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p' }) {
++async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p', chunksDir, segmentIndex }) {
+   const token = process.env.REPLICATE_API_TOKEN;
+   if (!token) {
+     throw new Error('REPLICATE_API_TOKEN is not set on the server.');
+@@ -121,7 +130,23 @@ async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p'
+   if (!videoRes.ok) {
+     throw new Error(`Failed to download avatar clip: ${videoRes.status}`);
+   }
+-  fs.writeFileSync(outputPath, Buffer.from(await videoRes.arrayBuffer()));
++  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
++  fs.writeFileSync(outputPath, videoBuffer);
++
++  // ── Persist a copy to chunksDir so every paid Replicate generation
++  //    survives even if the final composite fails or the workDir is wiped.
++  if (chunksDir) {
++    try {
++      fs.mkdirSync(chunksDir, { recursive: true });
++      const idx = segmentIndex !== undefined ? String(segmentIndex).padStart(4, '0') : Date.now();
++      const chunkName = `chunk_${idx}_${prediction.id}.mp4`;
++      fs.writeFileSync(path.join(chunksDir, chunkName), videoBuffer);
++    } catch (saveErr) {
++      // Non-fatal — log but never let a save failure abort the pipeline.
++      console.warn('[talkingHeadService] Could not persist chunk to chunksDir:', saveErr.message);
++    }
++  }
++
+   return outputPath;
+ }
+ 
+@@ -196,8 +221,11 @@ async function buildStillClip(durationSeconds, outputPath, meta) {
+  * @param {string} opts.audioPath      - Path to the full stitched narration WAV
+  * @param {number} opts.targetDuration - Total seconds the output video must run for
+  * @param {string} opts.outputPath     - Where to write the resulting MP4
++ * @param {string} [opts.resolution]   - '480p' | '720p' | '1080p'
++ * @param {string} [opts.chunksDir]    - Persistent directory to save every raw
++ *                                       Replicate clip so no generation is lost.
+  */
+-export async function generateTalkingHeadVideo({ segments, audioPath, targetDuration, outputPath, resolution = '720p' }) {
++export async function generateTalkingHeadVideo({ segments, audioPath, targetDuration, outputPath, resolution = '720p', chunksDir }) {
+   if (!fs.existsSync(STILL_IMAGE_PATH)) {
+     throw new Error(
+       `Presenter still image not found at ${STILL_IMAGE_PATH}. ` +
+@@ -222,7 +250,13 @@ export async function generateTalkingHeadVideo({ segments, audioPath, targetDura
+ 
+       if (seg.type === 'speech') {
+         const rawPath = path.join(workDir, `raw_${String(i).padStart(4, '0')}.mp4`);
+-        await callAvatarApi({ segmentAudioPath: seg.filePath, outputPath: rawPath, resolution });
++        await callAvatarApi({
++          segmentAudioPath: seg.filePath,
++          outputPath: rawPath,
++          resolution,
++          chunksDir,
++          segmentIndex: i,
++        });
+         await normalizeToExactDuration(rawPath, seg.duration, clipPath, meta);
+         fs.rmSync(rawPath, { force: true });
+       } else {

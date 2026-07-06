@@ -175,6 +175,11 @@ function migrateColumns() {
   if (!hasColumn('projects', 'talking_head_backup_path')) {
     db.exec(`ALTER TABLE projects ADD COLUMN talking_head_backup_path TEXT`);
   }
+  // Directory where every raw Replicate clip for this project is persisted,
+  // keyed by segment index and prediction ID, so no paid generation is lost.
+  if (!hasColumn('projects', 'talking_head_chunks_dir')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_chunks_dir TEXT`);
+  }
 
 }
 

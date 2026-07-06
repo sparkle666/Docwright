@@ -176,13 +176,21 @@ export async function generateTalkingHead(projectId, project, options = {}) {
     // as the drive signal; silence segments are filled with a frozen still
     // of the presenter so they don't appear to keep talking with no audio.
     // The full narration audio is muxed in as the single audio track.
+    //
+    // Each raw clip returned by Replicate is also saved to a persistent
+    // chunks directory keyed to this project so you can recover any paid
+    // generation even if the composite step fails or the workDir is wiped.
     updateProject(projectId, { talking_head_status: 'rendering' });
+    const chunksDir = path.join(STORAGE_ROOT, 'talking_head_chunks', projectId);
+    fs.mkdirSync(chunksDir, { recursive: true });
+
     const talkingHeadVideoPath = path.join(workDir, 'talking_head.mp4');
     await generateTalkingHeadVideo({
       segments: sequence,
       audioPath: stitchedAudioPath,
       targetDuration: narrationDuration,
       outputPath: talkingHeadVideoPath,
+      chunksDir,
     });
 
     // ── 6. Back up original (one-time, same as voicePipeline) ───────────
@@ -225,6 +233,7 @@ export async function generateTalkingHead(projectId, project, options = {}) {
     updateProject(projectId, {
       talking_head_status: 'complete',
       talking_head_backup_path: backupPath,
+      talking_head_chunks_dir: chunksDir,
       talking_head_generated_at: new Date().toISOString(),
       duration_seconds: finalDurationSeconds,
     });
