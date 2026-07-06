@@ -137,6 +137,20 @@ export const api = {
     method: 'POST',
   }).then(handle),
 
+  // ─── Talking-head presenter ─────────────────────────────────────────────
+
+  startTalkingHead: (projectId, fields = {}) => fetch(`${BASE}/projects/${projectId}/talking-head`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  }).then(handle),
+
+  getTalkingHeadStatus: (projectId) => fetch(`${BASE}/projects/${projectId}/talking-head/status`).then(handle),
+
+  restoreTalkingHeadVideo: (projectId) => fetch(`${BASE}/projects/${projectId}/talking-head/restore`, {
+    method: 'POST',
+  }).then(handle),
+
   exportUrl: (projectId, format) => `${BASE}/projects/${projectId}/export/${format}`,
 
   // Fetches the export as a blob and triggers a save-as download, so the

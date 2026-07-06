@@ -260,6 +260,7 @@ export default function ProjectPage() {
               <Link to={`/projects/${id}/assets`} className="transcript-link">View all assets →</Link>
               <Link to={`/projects/${id}/transcript`} className="transcript-link">View transcript →</Link>
               <Link to={`/projects/${id}/voice`} className="transcript-link">AI voice-over →</Link>
+              <Link to={`/projects/${id}/talking-head`} className="transcript-link">Talking-head presenter →</Link>
             </div>
           </div>
           <ExportRow projectId={id} />

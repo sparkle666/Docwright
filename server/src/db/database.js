@@ -159,6 +159,23 @@ function migrateColumns() {
   if (!hasColumn('doc_meta', 'outro_narration')) {
     db.exec(`ALTER TABLE doc_meta ADD COLUMN outro_narration TEXT`);
   }
+
+  // Talking-head presenter feature: overlays a synced presenter video bubble
+  // on the screen recording. Tracked separately from voice_status so both
+  // features can coexist independently.
+  if (!hasColumn('projects', 'talking_head_status')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_status TEXT`);
+  }
+  if (!hasColumn('projects', 'talking_head_error')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_error TEXT`);
+  }
+  if (!hasColumn('projects', 'talking_head_generated_at')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_generated_at TEXT`);
+  }
+  if (!hasColumn('projects', 'talking_head_backup_path')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_backup_path TEXT`);
+  }
+
 }
 
 initSchema();

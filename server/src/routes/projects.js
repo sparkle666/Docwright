@@ -12,6 +12,7 @@ import { upload } from '../utils/uploadMiddleware.js';
 import { enqueueJob, queueLength } from '../jobs/queue.js';
 import { processProject, regenerateDoc } from '../jobs/pipeline.js';
 import { generateAiVoice, restoreOriginalVideo } from '../jobs/voicePipeline.js';
+import { generateTalkingHead, restoreTalkingHeadVideo } from '../jobs/talkingHeadPipeline.js';
 import { extractFrameAtTimestamp } from '../services/ffmpegService.js';
 import { AI_VOICES, AI_VOICE_MODELS, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
 import { DOC_TYPES } from '../services/docTypePresets.js';
@@ -995,6 +996,7 @@ projectsRouter.get('/projects/:id/audio', (req, res) => {
 // ─── AI voice-over ─────────────────────────────────────────────────────────
 
 const VOICE_PROCESSING_STATUSES = new Set(['generating', 'stitching', 'muxing']);
+const TALKING_HEAD_PROCESSING_STATUSES = new Set(['generating', 'stitching', 'rendering', 'compositing']);
 
 /**
  * @openapi
@@ -1699,4 +1701,57 @@ projectsRouter.get('/frames/:frameId/image', (req, res) => {
   const frame = getFrame(req.params.frameId);
   if (!frame || !fs.existsSync(frame.file_path)) return res.status(404).end();
   res.sendFile(frame.file_path);
+});
+
+// ─── Talking-head presenter ───────────────────────────────────────────────────
+
+projectsRouter.post('/projects/:id/talking-head', async (req, res) => {
+  try {
+    const project = getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    if (TALKING_HEAD_PROCESSING_STATUSES.has(project.talking_head_status)) {
+      return res.status(409).json({ error: 'Talking-head generation already in progress' });
+    }
+
+    const { voice, model } = req.body || {};
+    enqueueJob(() => generateTalkingHead(project.id, project, { voice, model }));
+    res.json({ ok: true, message: 'Talking-head generation enqueued' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+projectsRouter.get('/projects/:id/talking-head/status', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const canRestore = Boolean(
+    project.talking_head_backup_path &&
+    fs.existsSync(project.talking_head_backup_path),
+  );
+
+  res.json({
+    talkingHeadStatus:      project.talking_head_status || null,
+    talkingHeadError:       project.talking_head_error || null,
+    talkingHeadGeneratedAt: project.talking_head_generated_at || null,
+    talkingHeadVoice:       project.voice_name || null,
+    canRestore,
+  });
+});
+
+projectsRouter.post('/projects/:id/talking-head/restore', async (req, res) => {
+  try {
+    const project = getProject(req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    if (TALKING_HEAD_PROCESSING_STATUSES.has(project.talking_head_status)) {
+      return res.status(409).json({ error: 'Cannot restore while generation is in progress' });
+    }
+
+    await restoreTalkingHeadVideo(project.id, project);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });

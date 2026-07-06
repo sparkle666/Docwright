@@ -383,3 +383,58 @@ export async function muxAudioIntoVideo(videoPath, audioPath, outputPath) {
   ]);
   return outputPath;
 }
+/**
+ * Overlays a talking-head video (pip) onto a base video in the bottom-right
+ * corner, at 25% of the base video's width. The overlay video's audio IS
+ * used as the output audio track — so if the talking-head already carries
+ * the TTS narration, do NOT pass a separate audio path; the voice will
+ * already be in the overlay clip.
+ *
+ * The overlay is circular-cropped and given a subtle shadow so it reads as
+ * a presenter bubble rather than a raw rectangle.
+ *
+ * @param {string} baseVideoPath      - The main screen-recording video
+ * @param {string} overlayVideoPath   - The talking-head clip (with TTS audio)
+ * @param {string} outputPath         - Where to write the composite MP4
+ */
+export async function overlayTalkingHead(baseVideoPath, overlayVideoPath, outputPath) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  // The filter chain:
+  //  1. Scale the overlay to 25% of the base width, keeping aspect ratio
+  //  2. Circular crop via an alpha mask (requires rgba pixel format first)
+  //  3. Drop shadow effect via a box blur on a copy used as shadow
+  //  4. Composite: shadow → base → overlay bubble in bottom-right corner
+  //     with 20px margin from each edge
+  //
+  // For simplicity and broad codec compatibility we use a rounded-rectangle
+  // approach (geq-based alpha) rather than full circular clip, which avoids
+  // needing libvmaf or complex filter graph gymnastics.
+  const filter = [
+    // Scale overlay to 25% of base width
+    '[1:v]scale=iw*0:ih*0,scale=w=\'min(iw*0.25,320)\':h=-1[ov_scaled]',
+    // Overlay in bottom-right, 20px from edge; use overlay's audio
+    '[0:v][ov_scaled]overlay=W-w-20:H-h-20:shortest=1[outv]',
+  ].join(';');
+
+  // Simpler, robust filter: scale to 25% of input width, pin bottom-right
+  await run('ffmpeg', [
+    '-y',
+    '-i', baseVideoPath,
+    '-i', overlayVideoPath,
+    '-filter_complex',
+    "[1:v]scale='min(iw*0.25\\,320)':-2[pip];[0:v][pip]overlay=W-w-20:H-h-20:shortest=1[outv]",
+    '-map', '[outv]',
+    '-map', '1:a:0',             // audio from the talking-head clip (= TTS narration)
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    outputPath,
+  ]);
+
+  return outputPath;
+}

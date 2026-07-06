@@ -1,0 +1,131 @@
+.th-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 32px 100px;
+}
+
+.th-page h1 {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  margin: 0 0 8px;
+}
+
+.th-sub {
+  color: var(--slate-soft);
+  font-size: 0.95rem;
+  margin: 0 0 24px;
+  max-width: 580px;
+  line-height: 1.5;
+}
+
+.th-explainer {
+  display: flex;
+  gap: 16px;
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 28px;
+}
+
+.th-explainer-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.th-explainer strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.92rem;
+}
+
+.th-explainer p {
+  margin: 0 0 8px;
+  font-size: 0.87rem;
+  color: var(--slate-soft);
+  line-height: 1.5;
+}
+
+.th-explainer p:last-child {
+  margin-bottom: 0;
+}
+
+.th-mock-note {
+  font-size: 0.82rem !important;
+  opacity: 0.8;
+}
+
+.th-mock-note code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8em;
+  background: var(--surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+}
+
+.th-controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 20px 0 16px;
+}
+
+.th-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--slate-soft);
+  flex: 1;
+  min-width: 220px;
+}
+
+.th-field select {
+  font-family: inherit;
+  font-size: 0.92rem;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.th-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--slate-soft);
+  margin: 14px 0;
+}
+
+.th-dot-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  animation: th-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes th-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(0.7); }
+}
+
+.th-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 20px 0 16px;
+}
+
+.th-meta {
+  font-size: 0.82rem;
+  color: var(--slate-soft);
+  margin-top: 8px;
+}

@@ -6,6 +6,7 @@ import ProjectPage from './pages/ProjectPage.jsx';
 import AssetsPage from './pages/AssetsPage.jsx';
 import TranscriptPage from './pages/TranscriptPage.jsx';
 import VoiceOverPage from './pages/VoiceOverPage.jsx';
+import TalkingHeadPage from './pages/TalkingHeadPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import './App.css';
 
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="/projects/:id/assets" element={<AssetsPage />} />
             <Route path="/projects/:id/transcript" element={<TranscriptPage />} />
             <Route path="/projects/:id/voice" element={<VoiceOverPage />} />
+            <Route path="/projects/:id/talking-head" element={<TalkingHeadPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>
