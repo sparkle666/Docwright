@@ -257,6 +257,7 @@ export default function ProjectPage() {
             <h1>{project.title}</h1>
             <div className="project-header-meta">
               <StatusPill status={project.status} />
+              <Link to={`/projects/${id}/assets`} className="transcript-link">View all assets →</Link>
               <Link to={`/projects/${id}/transcript`} className="transcript-link">View transcript →</Link>
               <Link to={`/projects/${id}/voice`} className="transcript-link">AI voice-over →</Link>
             </div>

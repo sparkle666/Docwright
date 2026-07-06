@@ -542,6 +542,145 @@ projectsRouter.get('/projects/:id/doc', (req, res) => {
 
 /**
  * @openapi
+ * /api/projects/{id}/assets:
+ *   get:
+ *     summary: Get every asset generated for a project
+ *     description: |
+ *       A single "everything" bundle for a project — the source video, the
+ *       extracted audio track, the Whisper transcript, the generated
+ *       documentation (metadata + steps), every matched screenshot frame,
+ *       AI voice-over status, available export formats, and cost/usage
+ *       totals. Intended for an asset browser view (e.g. what's shown when
+ *       a user clicks into a project from the dashboard) so the whole
+ *       history of what the pipeline produced is visible in one place,
+ *       rather than piecing it together from several endpoints.
+ *
+ *       Media fields (`video`, `audio`) report `available` plus a `url` to
+ *       stream/download the file — they don't inline the bytes.
+ *     tags: [Projects]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         example: proj_abc123
+ *     responses:
+ *       200:
+ *         description: Full asset bundle for the project
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 project: { $ref: '#/components/schemas/Project' }
+ *                 meta:    { $ref: '#/components/schemas/DocMeta' }
+ *                 steps:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/Step' }
+ *                 frames:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/Frame' }
+ *                 transcript:
+ *                   type: object
+ *                   nullable: true
+ *                   description: Null if the project hasn't been transcribed yet.
+ *                 media:
+ *                   type: object
+ *                   properties:
+ *                     video:
+ *                       type: object
+ *                       properties:
+ *                         available: { type: boolean }
+ *                         url: { type: string, nullable: true }
+ *                         durationSeconds: { type: number, nullable: true }
+ *                     audio:
+ *                       type: object
+ *                       properties:
+ *                         available: { type: boolean }
+ *                         url: { type: string, nullable: true }
+ *                     originalVideoBackup:
+ *                       type: object
+ *                       properties:
+ *                         available: { type: boolean }
+ *                         url: { type: string, nullable: true }
+ *                 voice:
+ *                   type: object
+ *                   description: State of the on-demand AI voice-over feature, if ever run for this project.
+ *                 exports:
+ *                   type: object
+ *                   description: Download URLs for every supported export format.
+ *                 cost:
+ *                   type: object
+ *                   properties:
+ *                     total_usd: { type: number }
+ *                     breakdown: { type: array }
+ *       404:
+ *         description: Project not found
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
+ */
+projectsRouter.get('/projects/:id/assets', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const meta = getDocMeta(project.id);
+  const steps = listSteps(project.id);
+  const frames = listFrames(project.id).map((frame) => ({
+    ...frame,
+    url: `/api/frames/${frame.id}/image`,
+  }));
+  const transcript = getTranscript(project.id);
+  const cost = estimateProjectCost(project.id);
+
+  const hasVideo = Boolean(project.video_path && fs.existsSync(project.video_path));
+  const hasAudio = Boolean(project.audio_path && fs.existsSync(project.audio_path));
+  const hasBackup = Boolean(
+    project.original_video_backup_path && fs.existsSync(project.original_video_backup_path)
+  );
+
+  res.json({
+    project,
+    meta,
+    steps,
+    frames,
+    transcript,
+    media: {
+      video: {
+        available: hasVideo,
+        url: hasVideo ? `/api/projects/${project.id}/video` : null,
+        durationSeconds: project.duration_seconds,
+      },
+      audio: {
+        available: hasAudio,
+        url: hasAudio ? `/api/projects/${project.id}/audio` : null,
+      },
+      originalVideoBackup: {
+        available: hasBackup,
+        // Not exposed as a streamable URL today — the restore endpoint below
+        // swaps it back into place rather than serving it directly.
+        note: hasBackup ? 'Restorable via POST /projects/:id/voice/restore' : null,
+      },
+    },
+    voice: {
+      status: project.voice_status || null,
+      voiceName: project.voice_name || null,
+      voiceModel: project.voice_model || null,
+      generatedAt: project.voice_generated_at || null,
+      error: project.voice_error || null,
+    },
+    exports: {
+      markdown: `/api/projects/${project.id}/export/markdown`,
+      html: `/api/projects/${project.id}/export/html`,
+      pdf: `/api/projects/${project.id}/export/pdf`,
+      docx: `/api/projects/${project.id}/export/docx`,
+    },
+    cost,
+  });
+});
+
+/**
+ * @openapi
  * /api/projects/{id}/transcript:
  *   get:
  *     summary: Get the raw Whisper transcript
@@ -716,9 +855,44 @@ projectsRouter.post('/projects/:id/regenerate-doc', (req, res) => {
   res.json({ ok: true, status: 'queued' });
 });
 
-// ─── Video streaming ──────────────────────────────────────────────────────────
+// ─── Video / audio streaming ────────────────────────────────────────────────
 
 const VIDEO_CONTENT_TYPES = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mkv': 'video/x-matroska' };
+const AUDIO_CONTENT_TYPES = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg' };
+
+/**
+ * Streams a file on disk with HTTP Range support, shared by the video and
+ * audio endpoints so both players can scrub without downloading the whole
+ * file up front.
+ */
+function streamMediaFile(req, res, filePath, contentType) {
+  const { size: fileSize } = fs.statSync(filePath);
+  const range = req.headers.range;
+
+  if (!range) {
+    res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  const match = /bytes=(\d+)-(\d*)/.exec(range);
+  if (!match) return res.status(416).end();
+
+  const start = parseInt(match[1], 10);
+  const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+  if (Number.isNaN(start) || start >= fileSize || end >= fileSize) {
+    res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+    return res.end();
+  }
+
+  res.writeHead(206, {
+    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+    'Accept-Ranges': 'bytes',
+    'Content-Length': end - start + 1,
+    'Content-Type': contentType,
+  });
+  fs.createReadStream(filePath, { start, end }).pipe(res);
+}
 
 /**
  * @openapi
@@ -765,34 +939,57 @@ projectsRouter.get('/projects/:id/video', (req, res) => {
   if (!project.video_path || !fs.existsSync(project.video_path)) {
     return res.status(404).json({ error: 'No video file for this project' });
   }
-
-  const { size: fileSize } = fs.statSync(project.video_path);
   const contentType = VIDEO_CONTENT_TYPES[path.extname(project.video_path).toLowerCase()] || 'video/mp4';
-  const range = req.headers.range;
+  streamMediaFile(req, res, project.video_path, contentType);
+});
 
-  if (!range) {
-    res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' });
-    fs.createReadStream(project.video_path).pipe(res);
-    return;
+/**
+ * @openapi
+ * /api/projects/{id}/audio:
+ *   get:
+ *     summary: Stream the extracted audio track
+ *     description: |
+ *       Serves the raw audio (`.wav`) extracted from the source video during
+ *       the pipeline's `extracting_audio` stage — the same file that was sent
+ *       to Whisper for transcription. Supports HTTP Range requests for
+ *       scrubbing, same as the video endpoint.
+ *     tags: [Projects]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         example: proj_abc123
+ *       - in: header
+ *         name: Range
+ *         schema: { type: string }
+ *         description: HTTP range header for partial content requests
+ *         example: "bytes=0-1048575"
+ *     responses:
+ *       200:
+ *         description: Full audio stream
+ *         content:
+ *           audio/wav: {}
+ *       206:
+ *         description: Partial audio content (range request)
+ *         content:
+ *           audio/wav: {}
+ *       404:
+ *         description: Project or audio file not found
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
+ *       416:
+ *         description: Range not satisfiable
+ */
+projectsRouter.get('/projects/:id/audio', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!project.audio_path || !fs.existsSync(project.audio_path)) {
+    return res.status(404).json({ error: 'No audio file for this project' });
   }
-
-  const match = /bytes=(\d+)-(\d*)/.exec(range);
-  if (!match) return res.status(416).end();
-
-  const start = parseInt(match[1], 10);
-  const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-  if (Number.isNaN(start) || start >= fileSize || end >= fileSize) {
-    res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
-    return res.end();
-  }
-
-  res.writeHead(206, {
-    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-    'Accept-Ranges': 'bytes',
-    'Content-Length': end - start + 1,
-    'Content-Type': contentType,
-  });
-  fs.createReadStream(project.video_path, { start, end }).pipe(res);
+  const contentType = AUDIO_CONTENT_TYPES[path.extname(project.audio_path).toLowerCase()] || 'audio/wav';
+  streamMediaFile(req, res, project.audio_path, contentType);
 });
 
 // ─── AI voice-over ─────────────────────────────────────────────────────────

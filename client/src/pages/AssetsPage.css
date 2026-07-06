@@ -1,0 +1,213 @@
+.assets-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 32px 100px;
+}
+
+.back-link {
+  display: inline-block;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--slate-soft);
+  text-decoration: none;
+  margin-bottom: 18px;
+}
+.back-link:hover { color: var(--amber-deep); }
+
+.assets-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.assets-page h1 {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  margin: 0 0 8px;
+}
+
+.assets-sub {
+  color: var(--slate-soft);
+  font-size: 0.95rem;
+  margin: 0;
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+.asset-section {
+  border-top: 1px solid var(--line);
+  padding: 28px 0;
+}
+.asset-section:first-of-type { border-top: none; }
+
+.asset-section-head { margin-bottom: 14px; }
+
+.asset-section h2 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--slate-soft);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.asset-section-sub {
+  color: var(--slate-soft);
+  font-size: 0.88rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.asset-empty {
+  color: var(--slate-soft);
+  font-size: 0.88rem;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin: 8px 0;
+}
+
+.asset-media-player,
+.asset-audio-player {
+  width: 100%;
+  border-radius: var(--radius-md);
+  margin-top: 8px;
+  background: var(--surface-sunken);
+}
+.asset-media-player { max-height: 420px; }
+
+.asset-transcript-preview {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--slate);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 8px 0 12px;
+}
+
+.asset-steps-list {
+  list-style: none;
+  margin: 8px 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.asset-step-item {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+}
+.asset-step-item:hover { background: var(--surface-sunken); }
+
+.asset-step-time {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--amber-deep);
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 44px;
+}
+
+.asset-step-title { color: var(--slate); }
+
+.asset-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 8px 0 0;
+}
+
+.asset-frame {
+  margin: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.asset-frame img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.asset-frame figcaption {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--slate-soft);
+  padding: 5px 8px;
+}
+
+.asset-voice-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.88rem;
+  color: var(--slate-soft);
+  margin: 8px 0 12px;
+}
+
+.asset-voice-badge {
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+}
+.asset-voice-complete { background: var(--moss-wash); color: var(--moss); }
+.asset-voice-failed { background: var(--danger-wash); color: var(--danger); }
+.asset-voice-generating,
+.asset-voice-stitching,
+.asset-voice-muxing { background: var(--amber-wash); color: var(--amber-deep); }
+
+.asset-voice-error { color: var(--danger); }
+
+.asset-export-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.asset-export-error { color: var(--danger); }
+
+.asset-cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 0.84rem;
+}
+
+.asset-cost-table th,
+.asset-cost-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.asset-cost-table th {
+  color: var(--slate-soft);
+  font-weight: 600;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}

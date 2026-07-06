@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage.jsx';
 import NewProjectPage from './pages/NewProjectPage.jsx';
 import ProjectPage from './pages/ProjectPage.jsx';
+import AssetsPage from './pages/AssetsPage.jsx';
 import TranscriptPage from './pages/TranscriptPage.jsx';
 import VoiceOverPage from './pages/VoiceOverPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/new" element={<NewProjectPage />} />
             <Route path="/projects/:id" element={<ProjectPage />} />
+            <Route path="/projects/:id/assets" element={<AssetsPage />} />
             <Route path="/projects/:id/transcript" element={<TranscriptPage />} />
             <Route path="/projects/:id/voice" element={<VoiceOverPage />} />
             <Route path="/settings" element={<SettingsPage />} />

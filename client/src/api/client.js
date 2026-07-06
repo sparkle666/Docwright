@@ -63,6 +63,10 @@ export const api = {
 
   getDoc: (id) => fetch(`${BASE}/projects/${id}/doc`).then(handle),
 
+  // Single "everything" bundle: doc, transcript, media availability, voice
+  // status, export links, and cost - used by the Assets page.
+  getAssets: (id) => fetch(`${BASE}/projects/${id}/assets`).then(handle),
+
   getTranscript: (id) => fetch(`${BASE}/projects/${id}/transcript`).then(handle),
 
   updateTranscript: (projectId, segments) => fetch(`${BASE}/projects/${projectId}/transcript`, {
@@ -78,6 +82,8 @@ export const api = {
   }).then(handle),
 
   videoUrl: (projectId) => `${BASE}/projects/${projectId}/video`,
+
+  audioUrl: (projectId) => `${BASE}/projects/${projectId}/audio`,
 
   updateStep: (projectId, stepId, fields) => fetch(`${BASE}/projects/${projectId}/steps/${stepId}`, {
     method: 'PATCH',
