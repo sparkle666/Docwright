@@ -21,8 +21,9 @@ const END_OVERRUN_TOLERANCE_SECONDS = 0.15;
 const END_OVERRUN_BUFFER_SECONDS = 0.1;
 
 /**
- * Generates an AI voice-over, produces a talking-head video (mock or real)
- * synced to that audio, and overlays the talking-head bubble in the
+ * Generates an AI voice-over, produces a talking-head video synced to that
+ * audio via the avatar API (per speech segment, with the presenter still
+ * image filling silent gaps), and overlays the talking-head bubble in the
  * bottom-right corner of the project video. The result is written over the
  * project's working video_path.
  *
@@ -30,9 +31,6 @@ const END_OVERRUN_BUFFER_SECONDS = 0.1;
  * directly onto the video — instead it becomes the audio track of the
  * talking-head clip, which is then composited onto the video. There is only
  * ever one audio source in the final output.
- *
- * Swap out generateTalkingHeadVideo() in talkingHeadService.js when you
- * have a real API (it takes the same audioPath + targetDuration contract).
  */
 export async function generateTalkingHead(projectId, project, options = {}) {
   const { voice = DEFAULT_VOICE, model = DEFAULT_MODEL } = options;
@@ -125,12 +123,15 @@ export async function generateTalkingHead(projectId, project, options = {}) {
 
     updateProject(projectId, { talking_head_status: 'stitching' });
 
-    // ── 4. Build the full narration audio (same timeline logic as voicePipeline) ──
+    // ── 4. Build the full narration timeline (same logic as voicePipeline), ──
+    // but keep each piece tagged as 'speech' or 'silence' so the talking-head
+    // stage knows which pieces to animate via the avatar API and which to
+    // fill with the static presenter still image.
     const sequence = [];
     let cursor = 0;
 
     if (introClip) {
-      sequence.push(introClip.filePath);
+      sequence.push({ type: 'speech', filePath: introClip.filePath, duration: introClip.duration });
       cursor += introClip.duration;
     }
 
@@ -140,39 +141,45 @@ export async function generateTalkingHead(projectId, project, options = {}) {
       if (gap > MIN_GAP_SECONDS) {
         const silPath = path.join(workDir, `sil_${part.index}.wav`);
         await generateSilence(gap, silPath);
-        sequence.push(silPath);
+        sequence.push({ type: 'silence', filePath: silPath, duration: gap });
         cursor += gap;
       }
-      sequence.push(part.filePath);
+      sequence.push({ type: 'speech', filePath: part.filePath, duration: part.duration });
       cursor += part.duration;
     }
 
     if (outroClip) {
       const silPath = path.join(workDir, 'sil_outro.wav');
       await generateSilence(OUTRO_LEAD_PAUSE_SECONDS, silPath);
-      sequence.push(silPath);
+      sequence.push({ type: 'silence', filePath: silPath, duration: OUTRO_LEAD_PAUSE_SECONDS });
       cursor += OUTRO_LEAD_PAUSE_SECONDS;
-      sequence.push(outroClip.filePath);
+      sequence.push({ type: 'speech', filePath: outroClip.filePath, duration: outroClip.duration });
       cursor += outroClip.duration;
     }
 
     const videoDuration = project.duration_seconds || cursor;
     if (videoDuration > cursor + MIN_GAP_SECONDS) {
       const tailPath = path.join(workDir, 'sil_tail.wav');
-      await generateSilence(videoDuration - cursor, tailPath);
-      sequence.push(tailPath);
+      const tailDuration = videoDuration - cursor;
+      await generateSilence(tailDuration, tailPath);
+      sequence.push({ type: 'silence', filePath: tailPath, duration: tailDuration });
       cursor = videoDuration;
     }
 
     const stitchedAudioPath = path.join(workDir, 'narration.wav');
-    await concatAudioFiles(sequence, stitchedAudioPath);
+    await concatAudioFiles(sequence.map((s) => s.filePath), stitchedAudioPath);
 
     const narrationDuration = await getAudioDuration(stitchedAudioPath);
 
-    // ── 5. Generate talking-head video (mock: loops talking-head.mp4) ────
+    // ── 5. Generate the talking-head video ───────────────────────────────
+    // Speech segments are animated via the avatar API using their own audio
+    // as the drive signal; silence segments are filled with a frozen still
+    // of the presenter so they don't appear to keep talking with no audio.
+    // The full narration audio is muxed in as the single audio track.
     updateProject(projectId, { talking_head_status: 'rendering' });
     const talkingHeadVideoPath = path.join(workDir, 'talking_head.mp4');
     await generateTalkingHeadVideo({
+      segments: sequence,
       audioPath: stitchedAudioPath,
       targetDuration: narrationDuration,
       outputPath: talkingHeadVideoPath,
