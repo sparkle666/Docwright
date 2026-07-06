@@ -320,6 +320,45 @@ export async function concatAudioFiles(filePathsInOrder, outputPath) {
 }
 
 /**
+ * Extends a video's picture by freezing its last frame for `extraSeconds`,
+ * using ffmpeg's `tpad` filter (stop_mode=clone) — a single-pass operation,
+ * no manual frame extraction / re-concatenation needed.
+ *
+ * Used when a generated AI voice-over (in particular the outro line on
+ * "flowing" walkthrough narration) runs longer than the source video: rather
+ * than let muxAudioIntoVideo's `-shortest` flag truncate the narration, we
+ * pad the picture out to match so the full voice-over always finishes before
+ * the video ends.
+ *
+ * `tpad` forces a re-encode of the video stream (filters can't stream-copy),
+ * so this is slower than a straight mux — it should only be called for the
+ * (relatively rare) overrun case, not on every voice-over generation.
+ */
+export async function extendVideoWithFreezeFrame(inputPath, extraSeconds, outputPath) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const ext = path.extname(outputPath).toLowerCase();
+  const isWebm = ext === '.webm';
+
+  const args = [
+    '-y',
+    '-i', inputPath,
+    '-vf', `tpad=stop_mode=clone:stop_duration=${extraSeconds.toFixed(3)}`,
+    '-an', // original audio is dropped anyway once muxed with the new track
+    '-c:v', isWebm ? 'libvpx-vp9' : 'libx264',
+  ];
+
+  if (isWebm) {
+    args.push('-b:v', '0', '-crf', '30');
+  } else {
+    args.push('-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p');
+  }
+
+  args.push(outputPath);
+  await run('ffmpeg', args);
+  return outputPath;
+}
+
+/**
  * Muxes a replacement audio track over a video's existing video stream,
  * dropping the original audio. Video is stream-copied (no re-encode, no
  * quality loss, fast); audio is encoded to a codec compatible with the
