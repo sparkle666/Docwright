@@ -5,13 +5,27 @@ import { VideoProvider } from '../context/VideoContext.jsx';
 import VideoPanel from '../components/VideoPanel.jsx';
 import './TalkingHeadPage.css';
 
-const IN_PROGRESS = new Set(['generating', 'stitching', 'rendering', 'compositing']);
+const IN_PROGRESS = new Set(['queued', 'generating', 'stitching', 'rendering', 'compositing']);
 
 const STAGE_LABEL = {
-  generating: 'Synthesizing narration audio…',
-  stitching:  'Assembling narration timeline…',
-  rendering:  'Generating talking-head video…',
-  compositing:'Compositing presenter bubble onto video…',
+  queued:       'Waiting in queue…',
+  generating:   'Synthesizing narration audio…',
+  stitching:    'Assembling narration timeline…',
+  rendering:    'Generating talking-head video…',
+  compositing:  'Compositing presenter bubble onto video…',
+};
+
+const STATE_LABEL = {
+  null:         'Not started',
+  queued:       'Queued',
+  generating:   'Generating',
+  stitching:    'Stitching',
+  rendering:    'Rendering',
+  compositing:  'Compositing',
+  paused:       'Paused',
+  stopped:      'Stopped',
+  failed:       'Failed',
+  complete:     'Complete',
 };
 
 const PIPELINE_IN_PROGRESS = new Set([
@@ -105,8 +119,27 @@ export default function TalkingHeadPage() {
     setError(null);
     setBusy(true);
     try {
-      await api.startTalkingHead(id, { voice, model });
+      if (status?.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.talkingHeadStatus)) {
+        await api.controlTalkingHead(id, 'resume');
+      } else {
+        await api.startTalkingHead(id, { voice, model });
+      }
+      await loadStatus();
       poll();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleControl(action) {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.controlTalkingHead(id, action);
+      await loadStatus();
+      if (action === 'resume') poll();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -165,6 +198,8 @@ export default function TalkingHeadPage() {
   }
 
   const inProgress = IN_PROGRESS.has(status.talkingHeadStatus);
+  const resumable  = status.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.talkingHeadStatus);
+  const progress   = status.progress || null;
 
   return (
     <VideoProvider src={`${api.videoUrl(id)}?v=${videoCacheKey}`}>
@@ -176,6 +211,26 @@ export default function TalkingHeadPage() {
           with the video. The talking-head video replaces the audio — no separate voice-over
           track is added on top.
         </p>
+
+        {/* ── Status indicator ───────────────────────────────────────── */}
+        <div className={`th-state th-state-${status.talkingHeadStatus || 'idle'}`}>
+          <strong>{STATE_LABEL[String(status.talkingHeadStatus)] || STATE_LABEL.null}</strong>
+          {progress?.totalSpeechSegments ? (
+            <span>{progress.completedSpeechSegments || 0}/{progress.totalSpeechSegments} audio clips ready</span>
+          ) : null}
+          {progress?.renderedSegments != null && progress?.totalTimelineSegments ? (
+            <span>{progress.renderedSegments}/{progress.totalTimelineSegments} video segments rendered</span>
+          ) : null}
+          {progress?.savedChunkCount ? (
+            <span className="th-chunk-badge">💾 {progress.savedChunkCount} chunk{progress.savedChunkCount === 1 ? '' : 's'} saved</span>
+          ) : null}
+          {status.hasUnfinishedGeneration ? (
+            <span className="th-resumable-badge">⚡ Resumable — generation can continue from where it stopped</span>
+          ) : null}
+          {status.talkingHeadStatus === 'complete' ? (
+            <span className="th-done-badge">✓ Done</span>
+          ) : null}
+        </div>
 
         <div className="th-explainer">
           <div className="th-explainer-icon">🎙</div>
@@ -195,6 +250,32 @@ export default function TalkingHeadPage() {
         </div>
 
         <VideoPanel defaultOpen label="Preview (reflects current state of the project video)" />
+
+        {/* ── Script preview (text that will be sent to voice model) ─── */}
+        {(status.preview?.lines?.length > 0) && (
+          <section className="th-script-card">
+            <div className="th-script-head">
+              <div>
+                <h2>Text that will be sent to the voice model</h2>
+                <p>Review this before starting — this is exactly what the presenter will say.</p>
+              </div>
+              <span className="th-script-count">
+                {status.preview?.totalSpeechSegments || 0} segment{status.preview?.totalSpeechSegments === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="th-script-list">
+              {(status.preview?.lines || []).map((line) => (
+                <div key={`${line.type}-${line.index}`} className="th-script-line">
+                  <div className="th-script-line-meta">
+                    <span>{line.label}</span>
+                    {typeof line.startSeconds === 'number' ? <span>{line.startSeconds.toFixed(1)}s</span> : null}
+                  </div>
+                  <div className="th-script-line-text">{line.text}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="th-controls">
           <label className="th-field">
@@ -219,6 +300,18 @@ export default function TalkingHeadPage() {
           </div>
         )}
 
+        {/* ── Pause / Stop controls ──────────────────────────────────── */}
+        {inProgress && (
+          <div className="th-control-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleControl('pause')} disabled={busy}>
+              ⏸ Pause
+            </button>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => handleControl('stop')} disabled={busy}>
+              ⏹ Stop
+            </button>
+          </div>
+        )}
+
         {status.talkingHeadStatus === 'failed' && (
           <div className="banner banner-error">
             Last attempt failed: {status.talkingHeadError}
@@ -234,9 +327,11 @@ export default function TalkingHeadPage() {
           >
             {inProgress
               ? 'Generating…'
-              : status.talkingHeadStatus === 'complete'
-                ? 'Regenerate presenter'
-                : 'Add talking-head presenter'}
+              : resumable
+                ? 'Resume generation'
+                : status.talkingHeadStatus === 'complete'
+                  ? 'Regenerate presenter'
+                  : 'Add talking-head presenter'}
           </button>
 
           {status.canRestore && (

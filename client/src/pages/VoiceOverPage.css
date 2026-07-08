@@ -79,3 +79,101 @@
   max-width: 560px;
   line-height: 1.5;
 }
+
+/* ── Status indicator ─────────────────────────────────────────────────── */
+.voice-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised, var(--surface));
+  font-size: 0.88rem;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.voice-state strong { margin-right: 4px; }
+
+.voice-state-complete  { border-color: var(--green, #22c55e); background: color-mix(in srgb, var(--green, #22c55e) 8%, var(--surface)); }
+.voice-state-failed    { border-color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--surface)); }
+.voice-state-paused,
+.voice-state-stopped   { border-color: var(--amber-deep, #d97706); background: color-mix(in srgb, var(--amber-deep, #d97706) 8%, var(--surface)); }
+.voice-state-generating,
+.voice-state-stitching,
+.voice-state-muxing    { border-color: var(--accent, #6366f1); background: color-mix(in srgb, var(--accent, #6366f1) 8%, var(--surface)); }
+
+/* ── Script preview card ─────────────────────────────────────────────── */
+.voice-script-card {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.voice-script-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface-raised, var(--surface));
+}
+
+.voice-script-head h2 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.voice-script-head p {
+  font-size: 0.8rem;
+  color: var(--slate-soft);
+  margin: 0;
+}
+
+.voice-script-count {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--slate-soft);
+  background: var(--surface-sunken, var(--surface));
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.voice-script-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.voice-script-line {
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line-subtle, var(--line-strong));
+  font-size: 0.88rem;
+}
+
+.voice-script-line:last-child { border-bottom: none; }
+
+.voice-script-line-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: var(--slate-soft);
+  margin-bottom: 4px;
+}
+
+.voice-script-line-text { color: var(--ink); line-height: 1.5; }
+
+/* ── Pause / Stop controls (inline with generate button) ─────────────── */
+.voice-control-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}

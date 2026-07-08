@@ -1,0 +1,466 @@
+From fecd8560a3d8f5989e280bbed06f3426d5dcafa9 Mon Sep 17 00:00:00 2001
+From: Docwright <patch@docwright.local>
+Date: Wed, 8 Jul 2026 01:06:49 +0000
+Subject: [PATCH] feat: text preview log, pause/stop/resume controls, and
+ status indicators
+
+- VoiceOverPage: add Pause and Stop buttons shown while generation is in progress
+- VoiceOverPage: button label shows 'Resume generation' when an unfinished run is resumable
+- VoiceOverPage: add missing CSS for .voice-state-* status indicator classes
+- VoiceOverPage: add missing CSS for .voice-script-* text preview log card
+- VoiceOverPage: add .voice-control-actions CSS for the new buttons
+- TalkingHeadPage: add .th-state status indicator showing current stage, progress counters,
+  saved chunk count badge, resumable badge, and done checkmark
+- TalkingHeadPage: add text-preview log card showing every line that will be sent to the
+  voice model before processing begins
+- TalkingHeadPage: add Pause / Stop buttons shown while in progress
+- TalkingHeadPage: wire up controlTalkingHead() for pause/stop/resume via existing API
+- TalkingHeadPage: button label shows 'Resume generation' when hasUnfinishedGeneration is true
+- TalkingHeadPage: progress counters (audio clips, video segments, chunks) fed from
+  status.progress returned by the existing /talking-head/status endpoint
+---
+ client/src/pages/TalkingHeadPage.css | 116 +++++++++++++++++++++++++++
+ client/src/pages/TalkingHeadPage.jsx | 113 +++++++++++++++++++++++---
+ client/src/pages/VoiceOverPage.css   |  98 ++++++++++++++++++++++
+ client/src/pages/VoiceOverPage.jsx   |  13 ++-
+ 4 files changed, 330 insertions(+), 10 deletions(-)
+
+diff --git a/client/src/pages/TalkingHeadPage.css b/client/src/pages/TalkingHeadPage.css
+index 6629190..d459dc7 100644
+--- a/client/src/pages/TalkingHeadPage.css
++++ b/client/src/pages/TalkingHeadPage.css
+@@ -129,3 +129,119 @@
+   color: var(--slate-soft);
+   margin-top: 8px;
+ }
++
++/* ── Status indicator ─────────────────────────────────────────────────── */
++.th-state {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  flex-wrap: wrap;
++  padding: 10px 14px;
++  border-radius: var(--radius-sm);
++  border: 1px solid var(--line-strong);
++  background: var(--surface-raised, var(--surface));
++  font-size: 0.88rem;
++  margin-bottom: 20px;
++}
++
++.th-state strong { margin-right: 4px; }
++
++.th-state-complete    { border-color: var(--green, #22c55e); background: color-mix(in srgb, var(--green, #22c55e) 8%, var(--surface)); }
++.th-state-failed      { border-color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--surface)); }
++.th-state-paused,
++.th-state-stopped     { border-color: var(--amber-deep, #d97706); background: color-mix(in srgb, var(--amber-deep, #d97706) 8%, var(--surface)); }
++.th-state-generating,
++.th-state-stitching,
++.th-state-rendering,
++.th-state-compositing,
++.th-state-queued      { border-color: var(--accent, #6366f1); background: color-mix(in srgb, var(--accent, #6366f1) 8%, var(--surface)); }
++
++.th-done-badge {
++  font-size: 0.78rem;
++  color: var(--green, #22c55e);
++  font-weight: 600;
++}
++
++.th-chunk-badge {
++  font-size: 0.78rem;
++  color: var(--slate-soft);
++}
++
++.th-resumable-badge {
++  font-size: 0.78rem;
++  color: var(--amber-deep, #d97706);
++}
++
++/* ── Script preview card ─────────────────────────────────────────────── */
++.th-script-card {
++  border: 1px solid var(--line-strong);
++  border-radius: var(--radius);
++  margin-bottom: 20px;
++  overflow: hidden;
++}
++
++.th-script-head {
++  display: flex;
++  align-items: flex-start;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 14px 18px;
++  border-bottom: 1px solid var(--line-strong);
++  background: var(--surface-raised, var(--surface));
++}
++
++.th-script-head h2 {
++  font-size: 0.92rem;
++  font-weight: 600;
++  margin: 0 0 2px;
++}
++
++.th-script-head p {
++  font-size: 0.8rem;
++  color: var(--slate-soft);
++  margin: 0;
++}
++
++.th-script-count {
++  flex-shrink: 0;
++  font-size: 0.78rem;
++  font-variant-numeric: tabular-nums;
++  color: var(--slate-soft);
++  background: var(--surface-sunken, var(--surface));
++  border: 1px solid var(--line-strong);
++  border-radius: 20px;
++  padding: 3px 10px;
++  white-space: nowrap;
++  align-self: center;
++}
++
++.th-script-list {
++  max-height: 360px;
++  overflow-y: auto;
++}
++
++.th-script-line {
++  padding: 10px 18px;
++  border-bottom: 1px solid var(--line-subtle, var(--line-strong));
++  font-size: 0.88rem;
++}
++
++.th-script-line:last-child { border-bottom: none; }
++
++.th-script-line-meta {
++  display: flex;
++  gap: 10px;
++  font-size: 0.75rem;
++  color: var(--slate-soft);
++  margin-bottom: 4px;
++}
++
++.th-script-line-text { color: var(--ink); line-height: 1.5; }
++
++/* ── Pause / Stop controls ───────────────────────────────────────────── */
++.th-control-actions {
++  display: flex;
++  gap: 8px;
++  flex-wrap: wrap;
++  margin-bottom: 8px;
++}
+diff --git a/client/src/pages/TalkingHeadPage.jsx b/client/src/pages/TalkingHeadPage.jsx
+index a20a00b..7cc0f75 100644
+--- a/client/src/pages/TalkingHeadPage.jsx
++++ b/client/src/pages/TalkingHeadPage.jsx
+@@ -5,13 +5,27 @@ import { VideoProvider } from '../context/VideoContext.jsx';
+ import VideoPanel from '../components/VideoPanel.jsx';
+ import './TalkingHeadPage.css';
+ 
+-const IN_PROGRESS = new Set(['generating', 'stitching', 'rendering', 'compositing']);
++const IN_PROGRESS = new Set(['queued', 'generating', 'stitching', 'rendering', 'compositing']);
+ 
+ const STAGE_LABEL = {
+-  generating: 'Synthesizing narration audio…',
+-  stitching:  'Assembling narration timeline…',
+-  rendering:  'Generating talking-head video…',
+-  compositing:'Compositing presenter bubble onto video…',
++  queued:       'Waiting in queue…',
++  generating:   'Synthesizing narration audio…',
++  stitching:    'Assembling narration timeline…',
++  rendering:    'Generating talking-head video…',
++  compositing:  'Compositing presenter bubble onto video…',
++};
++
++const STATE_LABEL = {
++  null:         'Not started',
++  queued:       'Queued',
++  generating:   'Generating',
++  stitching:    'Stitching',
++  rendering:    'Rendering',
++  compositing:  'Compositing',
++  paused:       'Paused',
++  stopped:      'Stopped',
++  failed:       'Failed',
++  complete:     'Complete',
+ };
+ 
+ const PIPELINE_IN_PROGRESS = new Set([
+@@ -105,7 +119,12 @@ export default function TalkingHeadPage() {
+     setError(null);
+     setBusy(true);
+     try {
+-      await api.startTalkingHead(id, { voice, model });
++      if (status?.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.talkingHeadStatus)) {
++        await api.controlTalkingHead(id, 'resume');
++      } else {
++        await api.startTalkingHead(id, { voice, model });
++      }
++      await loadStatus();
+       poll();
+     } catch (err) {
+       setError(err.message);
+@@ -114,6 +133,20 @@ export default function TalkingHeadPage() {
+     }
+   }
+ 
++  async function handleControl(action) {
++    setError(null);
++    setBusy(true);
++    try {
++      await api.controlTalkingHead(id, action);
++      await loadStatus();
++      if (action === 'resume') poll();
++    } catch (err) {
++      setError(err.message);
++    } finally {
++      setBusy(false);
++    }
++  }
++
+   async function handleRestore() {
+     setError(null);
+     setBusy(true);
+@@ -165,6 +198,8 @@ export default function TalkingHeadPage() {
+   }
+ 
+   const inProgress = IN_PROGRESS.has(status.talkingHeadStatus);
++  const resumable  = status.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.talkingHeadStatus);
++  const progress   = status.progress || null;
+ 
+   return (
+     <VideoProvider src={`${api.videoUrl(id)}?v=${videoCacheKey}`}>
+@@ -177,6 +212,26 @@ export default function TalkingHeadPage() {
+           track is added on top.
+         </p>
+ 
++        {/* ── Status indicator ───────────────────────────────────────── */}
++        <div className={`th-state th-state-${status.talkingHeadStatus || 'idle'}`}>
++          <strong>{STATE_LABEL[String(status.talkingHeadStatus)] || STATE_LABEL.null}</strong>
++          {progress?.totalSpeechSegments ? (
++            <span>{progress.completedSpeechSegments || 0}/{progress.totalSpeechSegments} audio clips ready</span>
++          ) : null}
++          {progress?.renderedSegments != null && progress?.totalTimelineSegments ? (
++            <span>{progress.renderedSegments}/{progress.totalTimelineSegments} video segments rendered</span>
++          ) : null}
++          {progress?.savedChunkCount ? (
++            <span className="th-chunk-badge">💾 {progress.savedChunkCount} chunk{progress.savedChunkCount === 1 ? '' : 's'} saved</span>
++          ) : null}
++          {status.hasUnfinishedGeneration ? (
++            <span className="th-resumable-badge">⚡ Resumable — generation can continue from where it stopped</span>
++          ) : null}
++          {status.talkingHeadStatus === 'complete' ? (
++            <span className="th-done-badge">✓ Done</span>
++          ) : null}
++        </div>
++
+         <div className="th-explainer">
+           <div className="th-explainer-icon">🎙</div>
+           <div>
+@@ -196,6 +251,32 @@ export default function TalkingHeadPage() {
+ 
+         <VideoPanel defaultOpen label="Preview (reflects current state of the project video)" />
+ 
++        {/* ── Script preview (text that will be sent to voice model) ─── */}
++        {(status.preview?.lines?.length > 0) && (
++          <section className="th-script-card">
++            <div className="th-script-head">
++              <div>
++                <h2>Text that will be sent to the voice model</h2>
++                <p>Review this before starting — this is exactly what the presenter will say.</p>
++              </div>
++              <span className="th-script-count">
++                {status.preview?.totalSpeechSegments || 0} segment{status.preview?.totalSpeechSegments === 1 ? '' : 's'}
++              </span>
++            </div>
++            <div className="th-script-list">
++              {(status.preview?.lines || []).map((line) => (
++                <div key={`${line.type}-${line.index}`} className="th-script-line">
++                  <div className="th-script-line-meta">
++                    <span>{line.label}</span>
++                    {typeof line.startSeconds === 'number' ? <span>{line.startSeconds.toFixed(1)}s</span> : null}
++                  </div>
++                  <div className="th-script-line-text">{line.text}</div>
++                </div>
++              ))}
++            </div>
++          </section>
++        )}
++
+         <div className="th-controls">
+           <label className="th-field">
+             <span>Voice</span>
+@@ -219,6 +300,18 @@ export default function TalkingHeadPage() {
+           </div>
+         )}
+ 
++        {/* ── Pause / Stop controls ──────────────────────────────────── */}
++        {inProgress && (
++          <div className="th-control-actions">
++            <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleControl('pause')} disabled={busy}>
++              ⏸ Pause
++            </button>
++            <button type="button" className="btn btn-danger btn-sm" onClick={() => handleControl('stop')} disabled={busy}>
++              ⏹ Stop
++            </button>
++          </div>
++        )}
++
+         {status.talkingHeadStatus === 'failed' && (
+           <div className="banner banner-error">
+             Last attempt failed: {status.talkingHeadError}
+@@ -234,9 +327,11 @@ export default function TalkingHeadPage() {
+           >
+             {inProgress
+               ? 'Generating…'
+-              : status.talkingHeadStatus === 'complete'
+-                ? 'Regenerate presenter'
+-                : 'Add talking-head presenter'}
++              : resumable
++                ? 'Resume generation'
++                : status.talkingHeadStatus === 'complete'
++                  ? 'Regenerate presenter'
++                  : 'Add talking-head presenter'}
+           </button>
+ 
+           {status.canRestore && (
+diff --git a/client/src/pages/VoiceOverPage.css b/client/src/pages/VoiceOverPage.css
+index 38c2f70..9783545 100644
+--- a/client/src/pages/VoiceOverPage.css
++++ b/client/src/pages/VoiceOverPage.css
+@@ -79,3 +79,101 @@
+   max-width: 560px;
+   line-height: 1.5;
+ }
++
++/* ── Status indicator ─────────────────────────────────────────────────── */
++.voice-state {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 10px 14px;
++  border-radius: var(--radius-sm);
++  border: 1px solid var(--line-strong);
++  background: var(--surface-raised, var(--surface));
++  font-size: 0.88rem;
++  margin-bottom: 20px;
++  flex-wrap: wrap;
++}
++
++.voice-state strong { margin-right: 4px; }
++
++.voice-state-complete  { border-color: var(--green, #22c55e); background: color-mix(in srgb, var(--green, #22c55e) 8%, var(--surface)); }
++.voice-state-failed    { border-color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 8%, var(--surface)); }
++.voice-state-paused,
++.voice-state-stopped   { border-color: var(--amber-deep, #d97706); background: color-mix(in srgb, var(--amber-deep, #d97706) 8%, var(--surface)); }
++.voice-state-generating,
++.voice-state-stitching,
++.voice-state-muxing    { border-color: var(--accent, #6366f1); background: color-mix(in srgb, var(--accent, #6366f1) 8%, var(--surface)); }
++
++/* ── Script preview card ─────────────────────────────────────────────── */
++.voice-script-card {
++  border: 1px solid var(--line-strong);
++  border-radius: var(--radius);
++  margin-bottom: 20px;
++  overflow: hidden;
++}
++
++.voice-script-head {
++  display: flex;
++  align-items: flex-start;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 14px 18px;
++  border-bottom: 1px solid var(--line-strong);
++  background: var(--surface-raised, var(--surface));
++}
++
++.voice-script-head h2 {
++  font-size: 0.92rem;
++  font-weight: 600;
++  margin: 0 0 2px;
++}
++
++.voice-script-head p {
++  font-size: 0.8rem;
++  color: var(--slate-soft);
++  margin: 0;
++}
++
++.voice-script-count {
++  flex-shrink: 0;
++  font-size: 0.78rem;
++  font-variant-numeric: tabular-nums;
++  color: var(--slate-soft);
++  background: var(--surface-sunken, var(--surface));
++  border: 1px solid var(--line-strong);
++  border-radius: 20px;
++  padding: 3px 10px;
++  white-space: nowrap;
++  align-self: center;
++}
++
++.voice-script-list {
++  max-height: 360px;
++  overflow-y: auto;
++}
++
++.voice-script-line {
++  padding: 10px 18px;
++  border-bottom: 1px solid var(--line-subtle, var(--line-strong));
++  font-size: 0.88rem;
++}
++
++.voice-script-line:last-child { border-bottom: none; }
++
++.voice-script-line-meta {
++  display: flex;
++  gap: 10px;
++  font-size: 0.75rem;
++  color: var(--slate-soft);
++  margin-bottom: 4px;
++}
++
++.voice-script-line-text { color: var(--ink); line-height: 1.5; }
++
++/* ── Pause / Stop controls (inline with generate button) ─────────────── */
++.voice-control-actions {
++  display: flex;
++  gap: 8px;
++  flex-wrap: wrap;
++  margin-bottom: 8px;
++}
+diff --git a/client/src/pages/VoiceOverPage.jsx b/client/src/pages/VoiceOverPage.jsx
+index ba56c4b..bbc333d 100644
+--- a/client/src/pages/VoiceOverPage.jsx
++++ b/client/src/pages/VoiceOverPage.jsx
+@@ -309,6 +309,17 @@ export default function VoiceOverPage() {
+           <div className="banner banner-error">Last attempt failed: {status.voiceError}</div>
+         )}
+ 
++        {inProgress && (
++          <div className="voice-control-actions">
++            <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleControl('pause')} disabled={busy}>
++              ⏸ Pause
++            </button>
++            <button type="button" className="btn btn-danger btn-sm" onClick={() => handleControl('stop')} disabled={busy}>
++              ⏹ Stop
++            </button>
++          </div>
++        )}
++
+         <div className="voice-actions">
+           <button
+             type="button"
+@@ -316,7 +327,7 @@ export default function VoiceOverPage() {
+             onClick={handleGenerate}
+             disabled={busy || inProgress || !voice || !model}
+           >
+-            {inProgress ? 'Generating…' : status.voiceStatus === 'complete' ? 'Regenerate' : 'Generate AI voice-over'}
++            {inProgress ? 'Generating…' : resumable ? 'Resume generation' : status.voiceStatus === 'complete' ? 'Regenerate' : 'Generate AI voice-over'}
+           </button>
+ 
+           {status.canRestore && (
+-- 
+2.43.0
+

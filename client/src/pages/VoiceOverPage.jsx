@@ -309,6 +309,17 @@ export default function VoiceOverPage() {
           <div className="banner banner-error">Last attempt failed: {status.voiceError}</div>
         )}
 
+        {inProgress && (
+          <div className="voice-control-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleControl('pause')} disabled={busy}>
+              ⏸ Pause
+            </button>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => handleControl('stop')} disabled={busy}>
+              ⏹ Stop
+            </button>
+          </div>
+        )}
+
         <div className="voice-actions">
           <button
             type="button"
@@ -316,7 +327,7 @@ export default function VoiceOverPage() {
             onClick={handleGenerate}
             disabled={busy || inProgress || !voice || !model}
           >
-            {inProgress ? 'Generating…' : status.voiceStatus === 'complete' ? 'Regenerate' : 'Generate AI voice-over'}
+            {inProgress ? 'Generating…' : resumable ? 'Resume generation' : status.voiceStatus === 'complete' ? 'Regenerate' : 'Generate AI voice-over'}
           </button>
 
           {status.canRestore && (
