@@ -2,11 +2,19 @@ import path from 'path';
 import fs from 'fs';
 import { updateProject, listSteps, getDocMeta, logUsage } from '../db/repository.js';
 import {
-  getAudioDuration, getVideoDuration, convertToStandardWav, generateSilence, speedUpAudio,
+  getAudioDuration, getVideoDuration, convertToStandardWav, generateSilence,
   concatAudioFiles, muxAudioIntoVideo, extendVideoWithFreezeFrame,
 } from '../services/ffmpegService.js';
 import { synthesizeSegmentAudio, stripMarkdownForTTS, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
 import { getDocTypePreset } from '../services/docTypePresets.js';
+import {
+  clearProcessControl,
+  clearProcessProgress,
+  finalizeInterruptedProcess,
+  getProcessSnapshot,
+  setProcessProgress,
+} from '../services/generationControlService.js';
+import { buildNarrationScript } from '../services/narrationScriptService.js';
 
 const STORAGE_ROOT = path.join(process.cwd(), 'storage');
 
@@ -93,6 +101,7 @@ export async function generateAiVoice(projectId, project, options = {}) {
     // in docTypePresets.js.
     const preset = getDocTypePreset(project.doc_type);
     const flowing = Boolean(preset.flowing);
+    const includeSpokenFraming = flowing && preset.spokenIntroOutro !== false;
 
     // Build the narration text for each step, with all markdown stripped
     // so the TTS never reads out asterisks or backticks.
@@ -125,7 +134,7 @@ export async function generateAiVoice(projectId, project, options = {}) {
     //    stored in doc_meta — here we just synthesize + measure them.
     let introClip = null;
     let outroClip = null;
-    if (flowing) {
+    if (includeSpokenFraming) {
       const docMeta = getDocMeta(projectId);
       const introText = stripMarkdownForTTS(docMeta?.intro_narration || '').trim();
       const outroText = stripMarkdownForTTS(docMeta?.outro_narration || '').trim();
@@ -322,6 +331,8 @@ export async function restoreOriginalVideo(projectId, project) {
     throw new Error('No original video backup available to restore.');
   }
   fs.copyFileSync(project.original_video_backup_path, project.video_path);
+  const workDir = path.join(STORAGE_ROOT, 'voice_tmp', projectId);
+  if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
 
   // A previous generation may have extended duration_seconds to accommodate
   // an overrunning voice-over (see generateAiVoice) — restore the real
@@ -332,5 +343,222 @@ export async function restoreOriginalVideo(projectId, project) {
   updateProject(projectId, {
     voice_status: null, voice_error: null, voice_name: null, voice_model: null, voice_generated_at: null,
     duration_seconds: originalDuration,
+    voice_control_action: null,
+    voice_progress_json: null,
   });
+}
+
+export async function generateAiVoiceResumable(projectId, project, options = {}) {
+  const {
+    voice = DEFAULT_VOICE,
+    model = DEFAULT_MODEL,
+    resume = false,
+  } = options;
+  const workDir = path.join(STORAGE_ROOT, 'voice_tmp', projectId);
+  const rawSteps = listSteps(projectId);
+  const docMeta = getDocMeta(projectId);
+  const script = buildNarrationScript({ docType: project.doc_type, steps: rawSteps, docMeta });
+
+  if (script.spokenLines.length === 0) {
+    throw new Error('No documentation steps with timestamps found â€” generate the documentation first.');
+  }
+
+  if (!resume && fs.existsSync(workDir)) {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(workDir, { recursive: true });
+
+  const baseProgress = {
+    stage: 'generating',
+    totalSpeechSegments: script.totalSpeechSegments,
+    completedSpeechSegments: 0,
+    hasStitchedAudio: false,
+    hasMuxedVideo: false,
+  };
+
+  const maybeInterrupt = () => {
+    const snapshot = getProcessSnapshot(projectId, 'voice');
+    if (!snapshot?.control) return false;
+    finalizeInterruptedProcess(projectId, 'voice', snapshot.control, snapshot.progress || baseProgress);
+    return true;
+  };
+
+  try {
+    clearProcessControl(projectId, 'voice');
+    updateProject(projectId, {
+      voice_status: 'generating',
+      voice_error: null,
+      voice_name: voice,
+      voice_model: model,
+    });
+
+    const parts = [];
+    let completedSpeechSegments = 0;
+
+    for (let i = 0; i < script.spokenLines.length; i++) {
+      const line = script.spokenLines[i];
+      const normPath = path.join(workDir, `speech_${String(i).padStart(4, '0')}.wav`);
+
+      if (!fs.existsSync(normPath)) {
+        const { buffer, usage } = await synthesizeSegmentAudio({ text: line.text, voice, model });
+        const rawPath = path.join(workDir, `speech_${String(i).padStart(4, '0')}_raw.wav`);
+        fs.writeFileSync(rawPath, buffer);
+        await convertToStandardWav(rawPath, normPath);
+        fs.rmSync(rawPath, { force: true });
+
+        const durationForUsage = await getAudioDuration(normPath);
+        logUsage(projectId, {
+          service: 'tts',
+          model,
+          inputTokens: usage?.prompt_tokens ?? Math.ceil(line.text.split(/\s+/).length * 1.3),
+          outputTokens: usage?.completion_tokens_details?.audio_tokens
+            ?? usage?.completion_tokens
+            ?? Math.ceil(durationForUsage * 20),
+        });
+      }
+
+      const duration = await getAudioDuration(normPath);
+      parts.push({
+        ...line,
+        index: i,
+        filePath: normPath,
+        duration,
+      });
+
+      completedSpeechSegments += 1;
+      setProcessProgress(projectId, 'voice', {
+        ...baseProgress,
+        stage: 'generating',
+        completedSpeechSegments,
+      });
+
+      if (maybeInterrupt()) return;
+    }
+
+    updateProject(projectId, { voice_status: 'stitching' });
+    setProcessProgress(projectId, 'voice', {
+      ...baseProgress,
+      stage: 'stitching',
+      completedSpeechSegments,
+    });
+    if (maybeInterrupt()) return;
+
+    const sequence = [];
+    let cursor = 0;
+
+    for (const part of parts) {
+      if (part.type === 'intro') {
+        sequence.push(part.filePath);
+        cursor += part.duration;
+        continue;
+      }
+
+      if (part.type === 'outro') {
+        const silPath = path.join(workDir, 'sil_outro.wav');
+        if (!fs.existsSync(silPath)) {
+          await generateSilence(OUTRO_LEAD_PAUSE_SECONDS, silPath);
+        }
+        sequence.push(silPath);
+        cursor += OUTRO_LEAD_PAUSE_SECONDS;
+        sequence.push(part.filePath);
+        cursor += part.duration;
+        continue;
+      }
+
+      const targetStart = Math.max(0, (part.startSeconds ?? 0) + NARRATION_START_OFFSET);
+      const gap = targetStart - cursor;
+
+      if (gap > MIN_GAP_SECONDS) {
+        const silPath = path.join(workDir, `sil_${part.key}.wav`);
+        if (!fs.existsSync(silPath)) {
+          await generateSilence(gap, silPath);
+        }
+        sequence.push(silPath);
+        cursor += gap;
+      }
+
+      sequence.push(part.filePath);
+      cursor += part.duration;
+    }
+
+    const videoDuration = project.duration_seconds || cursor;
+    if (videoDuration > cursor + MIN_GAP_SECONDS) {
+      const tailPath = path.join(workDir, 'sil_tail.wav');
+      if (!fs.existsSync(tailPath)) {
+        await generateSilence(videoDuration - cursor, tailPath);
+      }
+      sequence.push(tailPath);
+    }
+
+    const stitchedAudioPath = path.join(workDir, 'stitched.wav');
+    await concatAudioFiles(sequence, stitchedAudioPath);
+    setProcessProgress(projectId, 'voice', {
+      ...baseProgress,
+      stage: 'stitching',
+      completedSpeechSegments,
+      hasStitchedAudio: true,
+    });
+    if (maybeInterrupt()) return;
+
+    updateProject(projectId, { voice_status: 'muxing' });
+    setProcessProgress(projectId, 'voice', {
+      ...baseProgress,
+      stage: 'muxing',
+      completedSpeechSegments,
+      hasStitchedAudio: true,
+    });
+
+    let backupPath = project.original_video_backup_path;
+    if (!backupPath || !fs.existsSync(backupPath)) {
+      const ext = path.extname(project.video_path) || '.mp4';
+      backupPath = path.join(STORAGE_ROOT, 'originals', `${projectId}${ext}`);
+      fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+      fs.copyFileSync(project.video_path, backupPath);
+    }
+
+    const [finalAudioDuration, sourceVideoDuration] = await Promise.all([
+      getAudioDuration(stitchedAudioPath),
+      getVideoDuration(backupPath),
+    ]);
+    const overrunSeconds = finalAudioDuration - sourceVideoDuration;
+
+    let muxVideoSource = backupPath;
+    let finalDurationSeconds = sourceVideoDuration;
+
+    if (overrunSeconds > END_OVERRUN_TOLERANCE_SECONDS) {
+      const extraSeconds = overrunSeconds + END_OVERRUN_BUFFER_SECONDS;
+      const extendedPath = path.join(workDir, `extended${path.extname(project.video_path) || '.mp4'}`);
+      await extendVideoWithFreezeFrame(backupPath, extraSeconds, extendedPath);
+      muxVideoSource = extendedPath;
+      finalDurationSeconds = sourceVideoDuration + extraSeconds;
+    }
+
+    if (maybeInterrupt()) return;
+
+    const muxedPath = path.join(workDir, `final${path.extname(project.video_path) || '.mp4'}`);
+    await muxAudioIntoVideo(muxVideoSource, stitchedAudioPath, muxedPath);
+    fs.copyFileSync(muxedPath, project.video_path);
+
+    clearProcessProgress(projectId, 'voice', {
+      voice_status: 'complete',
+      original_video_backup_path: backupPath,
+      voice_generated_at: new Date().toISOString(),
+      duration_seconds: finalDurationSeconds,
+      voice_control_action: null,
+      voice_error: null,
+    });
+
+    if (fs.existsSync(workDir)) {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    const snapshot = getProcessSnapshot(projectId, 'voice');
+    if (snapshot?.control === 'pause' || snapshot?.control === 'stop') {
+      finalizeInterruptedProcess(projectId, 'voice', snapshot.control, snapshot.progress || baseProgress);
+      return;
+    }
+    console.error(`AI voice generation failed for project ${projectId}:`, err);
+    updateProject(projectId, { voice_status: 'failed', voice_error: err.message });
+    throw err;
+  }
 }

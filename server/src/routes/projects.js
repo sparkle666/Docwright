@@ -9,13 +9,15 @@ import {
   resetProjectData, updateTranscriptSegments,
 } from '../db/repository.js';
 import { upload } from '../utils/uploadMiddleware.js';
-import { enqueueJob, queueLength } from '../jobs/queue.js';
+import { enqueueJob, queueLength, cancelQueuedJob, isJobQueued } from '../jobs/queue.js';
 import { processProject, regenerateDoc } from '../jobs/pipeline.js';
-import { generateAiVoice, restoreOriginalVideo } from '../jobs/voicePipeline.js';
-import { generateTalkingHead, restoreTalkingHeadVideo } from '../jobs/talkingHeadPipeline.js';
+import { generateAiVoiceResumable, restoreOriginalVideo } from '../jobs/voicePipeline.js';
+import { generateTalkingHeadResumable, restoreTalkingHeadVideo } from '../jobs/talkingHeadPipeline.js';
 import { extractFrameAtTimestamp } from '../services/ffmpegService.js';
 import { AI_VOICES, AI_VOICE_MODELS, DEFAULT_VOICE, DEFAULT_MODEL } from '../services/ttsService.js';
 import { DOC_TYPES } from '../services/docTypePresets.js';
+import { buildNarrationScript } from '../services/narrationScriptService.js';
+import { parseProgress, requestProcessControl } from '../services/generationControlService.js';
 
 export const projectsRouter = express.Router();
 
@@ -59,6 +61,7 @@ projectsRouter.get('/doc-types', (req, res) => {
     key,
     label: val.label,
     flowing: Boolean(val.flowing),
+    availableInDocs: Boolean(val.availableInDocs),
   }));
   res.json({ types });
 });
@@ -174,7 +177,7 @@ projectsRouter.get('/models', (req, res) => {
  *               docType:
  *                 type: string
  *                 description: Documentation style preset (defaults to step_by_step)
- *                 enum: [step_by_step, sop, help_center, knowledge_base]
+ *                 enum: [step_by_step, sop, help_center, knowledge_base, talking_head_compact]
  *                 example: step_by_step
  *               video:
  *                 type: string
@@ -995,8 +998,27 @@ projectsRouter.get('/projects/:id/audio', (req, res) => {
 
 // ─── AI voice-over ─────────────────────────────────────────────────────────
 
-const VOICE_PROCESSING_STATUSES = new Set(['generating', 'stitching', 'muxing']);
-const TALKING_HEAD_PROCESSING_STATUSES = new Set(['generating', 'stitching', 'rendering', 'compositing']);
+const VOICE_PROCESSING_STATUSES = new Set(['queued', 'generating', 'stitching', 'muxing']);
+const TALKING_HEAD_PROCESSING_STATUSES = new Set(['queued', 'generating', 'stitching', 'rendering', 'compositing']);
+const RESUMABLE_PROCESS_STATUSES = new Set(['paused', 'stopped', 'failed']);
+
+function buildPreview(projectId, docType) {
+  const steps = listSteps(projectId);
+  const docMeta = getDocMeta(projectId);
+  const script = buildNarrationScript({ docType, steps, docMeta });
+  return {
+    totalSpeechSegments: script.totalSpeechSegments,
+    fullText: script.fullText,
+    lines: script.spokenLines.map((line, index) => ({
+      index,
+      type: line.type,
+      label: line.label,
+      text: line.text,
+      startSeconds: line.startSeconds ?? null,
+      endSeconds: line.endSeconds ?? null,
+    })),
+  };
+}
 
 /**
  * @openapi
@@ -1115,9 +1137,17 @@ projectsRouter.post('/projects/:id/voice', (req, res) => {
 
   const voice = req.body?.voice || process.env.TTS_VOICE || DEFAULT_VOICE;
   const model = req.body?.model || process.env.TTS_MODEL || DEFAULT_MODEL;
+  const resume = RESUMABLE_PROCESS_STATUSES.has(project.voice_status || '');
 
-  enqueueJob(() => generateAiVoice(project.id, project, { voice, model }));
-  res.json({ ok: true, status: 'queued' });
+  updateProject(project.id, {
+    voice_status: 'queued',
+    voice_error: null,
+    voice_name: voice,
+    voice_model: model,
+    voice_control_action: null,
+  });
+  enqueueJob(`voice:${project.id}`, () => generateAiVoiceResumable(project.id, getProject(project.id), { voice, model, resume }));
+  res.json({ ok: true, status: 'queued', resume });
 });
 
 /**
@@ -1155,6 +1185,11 @@ projectsRouter.post('/projects/:id/voice', (req, res) => {
 projectsRouter.get('/projects/:id/voice/status', (req, res) => {
   const project = getProject(req.params.id);
   if (!project) return res.status(404).json({ error: 'Project not found' });
+  const progress = parseProgress(project.voice_progress_json);
+  const preview = buildPreview(project.id, project.doc_type);
+  const hasUnfinishedGeneration = Boolean(
+    progress && project.voice_status && project.voice_status !== 'complete',
+  );
   res.json({
     voiceStatus: project.voice_status,
     voiceError: project.voice_error,
@@ -1162,7 +1197,56 @@ projectsRouter.get('/projects/:id/voice/status', (req, res) => {
     voiceModel: project.voice_model,
     voiceGeneratedAt: project.voice_generated_at,
     canRestore: Boolean(project.original_video_backup_path && fs.existsSync(project.original_video_backup_path)),
+    progress,
+    preview,
+    hasUnfinishedGeneration,
+    isQueued: isJobQueued(`voice:${project.id}`),
   });
+});
+
+projectsRouter.post('/projects/:id/voice/control', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const action = req.body?.action;
+  if (!['pause', 'stop', 'resume'].includes(action)) {
+    return res.status(400).json({ error: 'action must be one of: pause, stop, resume' });
+  }
+
+  if (action === 'resume') {
+    if (VOICE_PROCESSING_STATUSES.has(project.voice_status)) {
+      return res.status(409).json({ error: 'Voice generation is already active' });
+    }
+    const voice = project.voice_name || process.env.TTS_VOICE || DEFAULT_VOICE;
+    const model = project.voice_model || process.env.TTS_MODEL || DEFAULT_MODEL;
+    updateProject(project.id, {
+      voice_status: 'queued',
+      voice_error: null,
+      voice_control_action: null,
+    });
+    enqueueJob(`voice:${project.id}`, () => generateAiVoiceResumable(project.id, getProject(project.id), {
+      voice,
+      model,
+      resume: true,
+    }));
+    return res.json({ ok: true, status: 'queued', action: 'resume' });
+  }
+
+  if (project.voice_status === 'queued' && cancelQueuedJob(`voice:${project.id}`)) {
+    updateProject(project.id, {
+      voice_status: action === 'pause' ? 'paused' : 'stopped',
+      voice_control_action: null,
+      voice_error: null,
+    });
+    return res.json({ ok: true, status: action === 'pause' ? 'paused' : 'stopped', action });
+  }
+
+  if (!VOICE_PROCESSING_STATUSES.has(project.voice_status)) {
+    return res.status(409).json({ error: 'Voice generation is not currently active' });
+  }
+
+  requestProcessControl(project.id, 'voice', action);
+  res.json({ ok: true, status: project.voice_status, action });
 });
 
 /**
@@ -1714,9 +1798,23 @@ projectsRouter.post('/projects/:id/talking-head', async (req, res) => {
       return res.status(409).json({ error: 'Talking-head generation already in progress' });
     }
 
-    const { voice, model } = req.body || {};
-    enqueueJob(() => generateTalkingHead(project.id, project, { voice, model }));
-    res.json({ ok: true, message: 'Talking-head generation enqueued' });
+    const voice = req.body?.voice || project.voice_name || process.env.TTS_VOICE || DEFAULT_VOICE;
+    const model = req.body?.model || project.voice_model || process.env.TTS_MODEL || DEFAULT_MODEL;
+    const resume = RESUMABLE_PROCESS_STATUSES.has(project.talking_head_status || '');
+
+    updateProject(project.id, {
+      talking_head_status: 'queued',
+      talking_head_error: null,
+      talking_head_control_action: null,
+      voice_name: voice,
+      voice_model: model,
+    });
+    enqueueJob(`talking-head:${project.id}`, () => generateTalkingHeadResumable(project.id, getProject(project.id), {
+      voice,
+      model,
+      resume,
+    }));
+    res.json({ ok: true, message: 'Talking-head generation enqueued', resume });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1749,7 +1847,60 @@ projectsRouter.get('/projects/:id/talking-head/status', (req, res) => {
     canRestore,
     savedChunkCount,
     chunksDir: chunksDir || null,
+    progress: parseProgress(project.talking_head_progress_json),
+    preview: buildPreview(project.id, project.doc_type),
+    hasUnfinishedGeneration: Boolean(
+      parseProgress(project.talking_head_progress_json) &&
+      project.talking_head_status &&
+      project.talking_head_status !== 'complete',
+    ),
+    isQueued: isJobQueued(`talking-head:${project.id}`),
   });
+});
+
+projectsRouter.post('/projects/:id/talking-head/control', (req, res) => {
+  const project = getProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const action = req.body?.action;
+  if (!['pause', 'stop', 'resume'].includes(action)) {
+    return res.status(400).json({ error: 'action must be one of: pause, stop, resume' });
+  }
+
+  if (action === 'resume') {
+    if (TALKING_HEAD_PROCESSING_STATUSES.has(project.talking_head_status)) {
+      return res.status(409).json({ error: 'Talking-head generation is already active' });
+    }
+    const voice = project.voice_name || process.env.TTS_VOICE || DEFAULT_VOICE;
+    const model = project.voice_model || process.env.TTS_MODEL || DEFAULT_MODEL;
+    updateProject(project.id, {
+      talking_head_status: 'queued',
+      talking_head_error: null,
+      talking_head_control_action: null,
+    });
+    enqueueJob(`talking-head:${project.id}`, () => generateTalkingHeadResumable(project.id, getProject(project.id), {
+      voice,
+      model,
+      resume: true,
+    }));
+    return res.json({ ok: true, status: 'queued', action: 'resume' });
+  }
+
+  if (project.talking_head_status === 'queued' && cancelQueuedJob(`talking-head:${project.id}`)) {
+    updateProject(project.id, {
+      talking_head_status: action === 'pause' ? 'paused' : 'stopped',
+      talking_head_control_action: null,
+      talking_head_error: null,
+    });
+    return res.json({ ok: true, status: action === 'pause' ? 'paused' : 'stopped', action });
+  }
+
+  if (!TALKING_HEAD_PROCESSING_STATUSES.has(project.talking_head_status)) {
+    return res.status(409).json({ error: 'Talking-head generation is not currently active' });
+  }
+
+  requestProcessControl(project.id, 'talking_head', action);
+  res.json({ ok: true, status: project.talking_head_status, action });
 });
 
 projectsRouter.post('/projects/:id/talking-head/restore', async (req, res) => {

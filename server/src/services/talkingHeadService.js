@@ -150,6 +150,16 @@ async function callAvatarApi({ segmentAudioPath, outputPath, resolution = '720p'
   return outputPath;
 }
 
+function findPersistedChunk(chunksDir, segmentIndex) {
+  if (!chunksDir || segmentIndex === undefined || !fs.existsSync(chunksDir)) return null;
+  const prefix = `chunk_${String(segmentIndex).padStart(4, '0')}_`;
+  const match = fs.readdirSync(chunksDir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.mp4'))
+    .sort()
+    .pop();
+  return match ? path.join(chunksDir, match) : null;
+}
+
 /**
  * Forces a clip to an exact duration: trims if the API returned something
  * longer than the source audio, or freezes the last frame if it returned
@@ -225,7 +235,16 @@ async function buildStillClip(durationSeconds, outputPath, meta) {
  * @param {string} [opts.chunksDir]    - Persistent directory to save every raw
  *                                       Replicate clip so no generation is lost.
  */
-export async function generateTalkingHeadVideo({ segments, audioPath, targetDuration, outputPath, resolution = '720p', chunksDir }) {
+export async function generateTalkingHeadVideo({
+  segments,
+  audioPath,
+  targetDuration,
+  outputPath,
+  resolution = '720p',
+  chunksDir,
+  beforeSegment,
+  afterSegment,
+}) {
   if (!fs.existsSync(STILL_IMAGE_PATH)) {
     throw new Error(
       `Presenter still image not found at ${STILL_IMAGE_PATH}. ` +
@@ -247,22 +266,33 @@ export async function generateTalkingHeadVideo({ segments, audioPath, targetDura
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       const clipPath = path.join(workDir, `clip_${String(i).padStart(4, '0')}.mp4`);
+      if (beforeSegment) {
+        await beforeSegment(i, seg);
+      }
 
       if (seg.type === 'speech') {
         const rawPath = path.join(workDir, `raw_${String(i).padStart(4, '0')}.mp4`);
-        await callAvatarApi({
-          segmentAudioPath: seg.filePath,
-          outputPath: rawPath,
-          resolution,
-          chunksDir,
-          segmentIndex: i,
-        });
+        const persistedChunk = findPersistedChunk(chunksDir, i);
+        if (persistedChunk) {
+          fs.copyFileSync(persistedChunk, rawPath);
+        } else {
+          await callAvatarApi({
+            segmentAudioPath: seg.filePath,
+            outputPath: rawPath,
+            resolution,
+            chunksDir,
+            segmentIndex: i,
+          });
+        }
         await normalizeToExactDuration(rawPath, seg.duration, clipPath, meta);
         fs.rmSync(rawPath, { force: true });
       } else {
         await buildStillClip(seg.duration, clipPath, meta);
       }
       clipPaths.push(clipPath);
+      if (afterSegment) {
+        await afterSegment(i, seg, clipPath);
+      }
     }
 
     const listPath = path.join(workDir, 'concat_list.txt');

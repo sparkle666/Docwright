@@ -147,6 +147,12 @@ function migrateColumns() {
   if (!hasColumn('projects', 'voice_generated_at')) {
     db.exec(`ALTER TABLE projects ADD COLUMN voice_generated_at TEXT`);
   }
+  if (!hasColumn('projects', 'voice_control_action')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN voice_control_action TEXT`);
+  }
+  if (!hasColumn('projects', 'voice_progress_json')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN voice_progress_json TEXT`);
+  }
 
   // Spoken intro/outro lines for the walkthrough-voiceover doc types — a
   // short natural sentence framing the video's purpose ("How to update
@@ -179,6 +185,12 @@ function migrateColumns() {
   // keyed by segment index and prediction ID, so no paid generation is lost.
   if (!hasColumn('projects', 'talking_head_chunks_dir')) {
     db.exec(`ALTER TABLE projects ADD COLUMN talking_head_chunks_dir TEXT`);
+  }
+  if (!hasColumn('projects', 'talking_head_control_action')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_control_action TEXT`);
+  }
+  if (!hasColumn('projects', 'talking_head_progress_json')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN talking_head_progress_json TEXT`);
   }
 
 }

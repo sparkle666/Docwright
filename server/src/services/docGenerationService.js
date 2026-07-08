@@ -2,15 +2,27 @@ import { getOpenAIClient } from './openaiClient.js';
 import { getDocTypePreset } from './docTypePresets.js';
 import { logUsage } from '../db/repository.js';
 
-function buildStepSchemaInstructions(flowing) {
+function buildStepSchemaInstructions(preset) {
+  const flowing = Boolean(preset.flowing);
+  const includeSpokenFraming = flowing && preset.spokenIntroOutro !== false;
   // Only the walkthrough-voiceover presets (flowing: true) get spoken
   // intro/outro lines — written doc types already have their own framing
   // via headings/summary and don't need a "spoken" opener.
-  const introOutroRules = flowing
+  const introOutroRules = includeSpokenFraming
     ? `- "intro_narration": ONE natural spoken sentence that a human presenter would say to open this video and frame its purpose — e.g. "How to update your account information" or "In this walkthrough, we'll show you how to reset your password." It must sound spoken aloud, not like a written doc summary. Do not start with "This guide" or "This video covers".
 - "outro_narration": ONE short natural spoken sentence that wraps up the video — e.g. "And that's it — you've successfully updated your account information." Keep it brief and conversational.`
     : `- "intro_narration": always an empty string ("") — not used for this doc type.
 - "outro_narration": always an empty string ("") — not used for this doc type.`;
+
+  const compactRules = preset.ultraCompact
+    ? `- "summary" must be exactly ONE short sentence.
+- "audience" must be a very short phrase.
+- "prerequisites" must be empty unless absolutely required.
+- Each "title" must be 2-5 words.
+- Each "body_markdown" must be ONE short sentence or short phrase only. Prefer 4-10 words, and never exceed 14 words.
+- If the transcript is verbose, compress it to the essential action only.
+- No bullet lists, no multi-sentence paragraphs, and no extra explanation.`
+    : '';
 
   return `
 Return ONLY valid JSON (no markdown fences, no commentary) matching this exact shape:
@@ -38,6 +50,7 @@ Rules:
 - Do not invent UI elements or actions not implied by the transcript.
 - Aim for steps that are neither too granular (single words) nor too broad (the whole video as one step).
 ${introOutroRules}
+${compactRules}
 `;
 }
 
@@ -56,7 +69,7 @@ export async function generateStructuredDoc({ timestampedText, docType, textMode
   const client = getOpenAIClient();
   const preset = getDocTypePreset(docType);
 
-  const systemPrompt = `${preset.systemPrompt}\n\n${buildStepSchemaInstructions(Boolean(preset.flowing))}`;
+  const systemPrompt = `${preset.systemPrompt}\n\n${buildStepSchemaInstructions(preset)}`;
   const userPrompt = `Video title: "${title}"\n\nTimestamped transcript (format is "[MM:SS] spoken text"):\n\n${timestampedText}\n\nProduce the JSON described in your instructions now.`;
 
   const completion = await client.chat.completions.create({

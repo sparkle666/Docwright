@@ -133,6 +133,12 @@ export const api = {
 
   getVoiceStatus: (projectId) => fetch(`${BASE}/projects/${projectId}/voice/status`).then(handle),
 
+  controlVoiceGeneration: (projectId, action) => fetch(`${BASE}/projects/${projectId}/voice/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  }).then(handle),
+
   restoreOriginalVideo: (projectId) => fetch(`${BASE}/projects/${projectId}/voice/restore`, {
     method: 'POST',
   }).then(handle),
@@ -146,6 +152,12 @@ export const api = {
   }).then(handle),
 
   getTalkingHeadStatus: (projectId) => fetch(`${BASE}/projects/${projectId}/talking-head/status`).then(handle),
+
+  controlTalkingHead: (projectId, action) => fetch(`${BASE}/projects/${projectId}/talking-head/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  }).then(handle),
 
   restoreTalkingHeadVideo: (projectId) => fetch(`${BASE}/projects/${projectId}/talking-head/restore`, {
     method: 'POST',

@@ -30,6 +30,18 @@ Write in a neutral, reference-style tone suitable for a searchable knowledge bas
 Front-load the most important information. Use descriptive step titles that would work well as search-indexed headings.
 Where relevant, note related settings or side-effects mentioned in the transcript.`,
   },
+  talking_head_compact: {
+    label: 'Talking-Head Script - Ultra Compact',
+    flowing: true,
+    availableInDocs: true,
+    spokenIntroOutro: false,
+    ultraCompact: true,
+    systemPrompt: `You are an AI video script editor creating the cheapest possible talking-head script from a screen-recording transcript.
+Every extra word increases generation cost, so compress aggressively while preserving the true action sequence.
+Rewrite each section into the fewest words that still sound natural when spoken aloud.
+If a paragraph is long, reduce it to one short sentence. Remove filler, repetition, side comments, and obvious explanations.
+Keep the output clear enough to review as documentation, but optimized for ultra-short spoken delivery rather than rich written detail.`,
+  },
 
   // --- Walkthrough Video Voiceover options ---
   // Pick ONE of these three as your active "walkthrough_voiceover" preset,

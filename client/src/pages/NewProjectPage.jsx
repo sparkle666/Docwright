@@ -9,6 +9,7 @@ const DOC_TYPE_DESCRIPTIONS = {
   sop: 'Formal, auditable procedure with precise, unambiguous steps.',
   help_center: 'Friendly, plain-language article aimed at end customers.',
   knowledge_base: 'Neutral, reference-style article optimized for search.',
+  talking_head_compact: 'Ultra-short script for AI talking-head videos and low-cost narration.',
   walkthrough_voiceover_polished: 'Smooth, professional narrator — clean and neutral.',
   walkthrough_voiceover_demo: 'Confident, upbeat narration for product demos.',
   walkthrough_voiceover_technical: 'Precise, authoritative narration for tutorials and training.',
@@ -36,7 +37,11 @@ export default function NewProjectPage() {
     api.getDocTypes().then((data) => {
       // In video mode, only offer the walkthrough-voiceover presets —
       // the written-doc presets (step-by-step, SOP, etc.) don't apply here.
-      const relevant = data.types.filter((t) => Boolean(t.flowing) === isVideoMode);
+      const relevant = data.types.filter((t) => (
+        isVideoMode
+          ? Boolean(t.flowing)
+          : !t.flowing || Boolean(t.availableInDocs)
+      ));
       setDocTypes(relevant);
       const { defaultDocType } = getSettings();
       const preferred = relevant.find((t) => t.key === defaultDocType);

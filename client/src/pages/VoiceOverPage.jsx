@@ -5,12 +5,24 @@ import { VideoProvider } from '../context/VideoContext.jsx';
 import VideoPanel from '../components/VideoPanel.jsx';
 import './VoiceOverPage.css';
 
-const IN_PROGRESS = new Set(['generating', 'stitching', 'muxing']);
+const IN_PROGRESS = new Set(['queued', 'generating', 'stitching', 'muxing']);
 
 const STAGE_LABEL = {
   generating: 'Synthesizing speech for each transcript segment…',
   stitching: 'Fitting clips to the original timing…',
   muxing: 'Combining the new audio with your video…',
+};
+
+const STATE_LABEL = {
+  null: 'Not started',
+  queued: 'Queued',
+  generating: 'Generating',
+  stitching: 'Stitching',
+  muxing: 'Muxing',
+  paused: 'Paused',
+  stopped: 'Stopped',
+  failed: 'Failed',
+  complete: 'Complete',
 };
 
 // Background pipeline stages the project passes through before it has
@@ -126,7 +138,26 @@ export default function VoiceOverPage() {
     setError(null);
     setBusy(true);
     try {
-      await api.startVoiceGeneration(id, { voice, model });
+      if (status?.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.voiceStatus)) {
+        await api.controlVoiceGeneration(id, 'resume');
+      } else {
+        await api.startVoiceGeneration(id, { voice, model });
+      }
+      await loadStatus();
+      poll();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleControl(action) {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.controlVoiceGeneration(id, action);
+      await loadStatus();
       poll();
     } catch (err) {
       setError(err.message);
@@ -203,6 +234,8 @@ export default function VoiceOverPage() {
   }
 
   const inProgress = IN_PROGRESS.has(status.voiceStatus);
+  const resumable = status.hasUnfinishedGeneration && ['paused', 'stopped', 'failed'].includes(status.voiceStatus);
+  const progress = status.progress || null;
 
   return (
     <VideoProvider src={`${api.videoUrl(id)}?v=${videoCacheKey}`}>
@@ -216,7 +249,38 @@ export default function VoiceOverPage() {
           any time afterward.
         </p>
 
+        <div className={`voice-state voice-state-${status.voiceStatus || 'idle'}`}>
+          <strong>{STATE_LABEL[String(status.voiceStatus)] || STATE_LABEL.null}</strong>
+          {progress?.totalSpeechSegments ? (
+            <span>{progress.completedSpeechSegments || 0}/{progress.totalSpeechSegments} speech clips ready</span>
+          ) : null}
+          {status.hasUnfinishedGeneration ? <span>Unfinished generation available for resume.</span> : null}
+        </div>
+
         <VideoPanel defaultOpen label="Preview (this is the actual project video, with whatever audio is currently active)" />
+
+        <section className="voice-script-card">
+          <div className="voice-script-head">
+            <div>
+              <h2>Text that will be sent to the voice model</h2>
+              <p>Review this before starting so you know exactly what will be spoken.</p>
+            </div>
+            <span className="voice-script-count">
+              {status.preview?.totalSpeechSegments || 0} segment{status.preview?.totalSpeechSegments === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="voice-script-list">
+            {(status.preview?.lines || []).map((line) => (
+              <div key={`${line.type}-${line.index}`} className="voice-script-line">
+                <div className="voice-script-line-meta">
+                  <span>{line.label}</span>
+                  {typeof line.startSeconds === 'number' ? <span>{line.startSeconds.toFixed(1)}s</span> : null}
+                </div>
+                <div className="voice-script-line-text">{line.text}</div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="voice-controls">
           <label className="voice-field">

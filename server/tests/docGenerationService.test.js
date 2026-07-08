@@ -81,6 +81,30 @@ describe('generateStructuredDoc', () => {
     expect(request).not.toHaveProperty('temperature');
   });
 
+  test('uses ultra-compact rules for the talking-head preset', async () => {
+    mockCreate.mockResolvedValueOnce(makeValidResponse({
+      summary: 'Quick setup.',
+      audience: 'Viewers',
+      prerequisites: '',
+      intro_narration: '',
+      outro_narration: '',
+      steps: [
+        { title: 'Open settings', body_markdown: 'Open **Settings**.', start_seconds: 0, end_seconds: 10 },
+      ],
+    }));
+    await generateStructuredDoc({
+      timestampedText: '[00:00] Open settings and update your profile',
+      docType: 'talking_head_compact',
+      title: 'Compact test',
+    });
+
+    const request = mockCreate.mock.calls[0][0];
+    const systemPrompt = request.messages[0].content;
+    expect(systemPrompt).toContain('cheapest possible talking-head script');
+    expect(systemPrompt).toContain('"body_markdown" must be ONE short sentence or short phrase only');
+    expect(systemPrompt).toContain('"intro_narration": always an empty string');
+  });
+
   test('throws when GPT returns invalid JSON', async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: 'not json at all' } }],
